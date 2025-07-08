@@ -62,11 +62,7 @@ Response ResponseHandler::handleRequest(Connection* conn) {
         return createInternalErrorResponse();
     }
 
-    // Early check for return directive (location > server)
     Return* ret = conn->getReturnDirective();
-    if (!ret) {
-        std::cout << "no return directive\n";
-    }
     if (ret) {
         std::cout << "i am in return directive\n";
         // Only apply if the request matches the location's URI (for location context)
@@ -87,17 +83,32 @@ Response ResponseHandler::handleRequest(Connection* conn) {
         if (applyReturn) {
             unsigned int code = ret->getCode();
             char* url = ret->getUrl();
+            std::string msg;
             if (code >= 300 && code < 400 && url && url[0]) {
                 // Redirect
                 Response response = Response::createRedirectResponse(code, std::string(url));
                 return response;
             } else if (code >= 400 && code < 600) {
-                // Error with custom message or default
-                std::string msg = (url && url[0]) ? std::string(url) : "";
+                if (url && url[0] == '/') {
+                    std::string filePath = _getRootPath(conn) + url;
+                    msg = loadFile(filePath);
+                    if (msg.empty()) {
+                        msg = "Error " + toString(code);
+                    }
+                } else if (url && url[0]) {
+                    msg = std::string(url);
+                } else {
+                    msg = "Error " + toString(code);
+                }
                 return createErrorResponseWithMapping(conn, code, msg);
             } else {
                 // Other codes: treat as error
-                return createErrorResponseWithMapping(conn, code, url ? std::string(url) : "");
+                if (url && url[0]) {
+                    msg = std::string(url);
+                } else {
+                    msg = "Error " + toString(code);
+                }
+                return createErrorResponseWithMapping(conn, code, msg);
             }
         }
     }
@@ -160,7 +171,7 @@ Response ResponseHandler::_handleGET(Connection* conn) {
 
     struct stat fileStat;
     if (stat(filePath.c_str(), &fileStat) != 0) {
-        return createNotFoundResponse();
+        return createNotFoundResponse(conn);
     }
 
     if (S_ISDIR(fileStat.st_mode)) {
@@ -239,7 +250,7 @@ Response ResponseHandler::_handlePOST(Connection* conn) {
         }
     } */
     
-    return createNotFoundResponse();
+    return createNotFoundResponse(conn);
 }
 
 Response ResponseHandler::_handleDELETE(Connection* conn) {
@@ -255,7 +266,7 @@ Response ResponseHandler::_handleDELETE(Connection* conn) {
     // } else {
     //     return createNotFoundResponse();
     // } 
-    return createNotFoundResponse();
+    return createNotFoundResponse(conn);
 }
 
 // Configuration extraction methods
@@ -708,9 +719,9 @@ Response ResponseHandler::createMethodNotAllowedResponse(const std::vector<std::
     return response;
 }
 
-Response ResponseHandler::createNotFoundResponse() {
+Response ResponseHandler::createNotFoundResponse(Connection* conn) {
     // Use error_page mapping for 404
-    return createErrorResponseWithMapping(NULL, 404, "The requested resource was not found");
+    return createErrorResponseWithMapping(conn, 404, "The requested resource was not found");
 }
 
 Response ResponseHandler::createForbiddenResponse() {
