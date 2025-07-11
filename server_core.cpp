@@ -15,7 +15,11 @@
 # include <arpa/inet.h>
 # include <sys/epoll.h>
 # include <sys/socket.h>
+# include <sys/sendfile.h>
 # include <netinet/in.h>
+# include <netinet/tcp.h>
+# include <fcntl.h>
+# include <errno.h>
 # include "Connection.hpp"
 #include "conf/LimitExcept.hpp"
 #include "conf/Location.hpp"
@@ -204,6 +208,7 @@ void	checkForTimeouts(std::vector<Connection*>& connections, struct epoll_event 
 		Connection* conn = *it;
 		if (conn->req && conn->req->checkForTimeout())
 		{
+			std::cout << "Connection timeout for fd " << conn->fd << std::endl;
 			conn->req->setState(false, REQUEST_TIMEOUT);
 			conn->shouldKeepAlive = false;
 			ev.events = EPOLLOUT;
@@ -212,6 +217,43 @@ void	checkForTimeouts(std::vector<Connection*>& connections, struct epoll_event 
 		}
 		++it;
 	}
+}
+
+// void	cleanupStaleConnections(std::vector<Connection*>& connections, int epollFd)
+// {
+// 	std::vector<Connection*>::iterator it = connections.begin();
+	
+// 	while (it != connections.end())
+// 	{
+// 		Connection* conn = *it;
+// 		time_t currentTime = time(NULL);
+		
+// 		// Close connections that have been idle for too long
+// 		if (currentTime - conn->lastTimeoutCheck > 300) // 5 minutes
+// 		{
+// 			std::cout << "Closing stale connection fd " << conn->fd << std::endl;
+// 			conn->closeConnection(conn, connections, epollFd);
+// 			it = connections.begin(); // Reset iterator after removal
+// 		}
+// 		else
+// 		{
+// 			++it;
+// 		}
+// 	}
+// }
+
+void	handleConnectionError(Connection* conn, std::vector<Connection*>& connections, int epollFd, const std::string& error)
+{
+	std::cout << "Connection error for fd " << conn->fd << ": " << error << std::endl;
+	
+	// Send error response if possible
+	if (conn->req) {
+		conn->res = ResponseHandler::createInternalErrorResponse();
+		std::string responseStr = conn->res.build();
+		send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
+	}
+	
+	conn->closeConnection(conn, connections, epollFd);
 }
 
 void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
@@ -223,6 +265,8 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 	int							numberOfEvents;
 	struct epoll_event			ev, events[MAX_EVENTS];
 	time_t						lastTimeoutCheck = time(NULL);
+	// time_t						lastCleanupCheck = time(NULL);
+	const int					MAX_CONNECTIONS = 1000; // Connection limit
 	
 	// Initialize ResponseHandler
 	ResponseHandler::initialize();
@@ -234,18 +278,40 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 			checkForTimeouts(connections, ev, epollFd);
 			lastTimeoutCheck = time(NULL);
 		}
+		
+		// // Cleanup stale connections every 30 seconds
+		// if (time(NULL) - lastCleanupCheck >= 30)
+		// {
+		// 	cleanupStaleConnections(connections, epollFd);
+		// 	lastCleanupCheck = time(NULL);
+		// }
+		
 		numberOfEvents = epoll_wait(epollFd, events, MAX_EVENTS, 1000);
 
 		for (int i = 0; i < numberOfEvents; i++)
 		{
 			if (std::find(sockets.begin(), sockets.end(), events[i].data.fd) != sockets.end())
 			{
+				// Check connection limit
+				if (connections.size() >= MAX_CONNECTIONS) {
+					std::cout << "Connection limit reached, rejecting new connection" << std::endl;
+					continue;
+				}
+				
 				int clientFd = accept(events[i].data.fd, NULL, NULL);
 				if (clientFd == -1)
 				{
-					std::cout << "Error: failed to accept a client\n";
+					std::cout << "Error: failed to accept a client" << std::endl;
 					continue;
 				}
+				
+				// Set socket options for better performance
+				int optval = 1;
+				setsockopt(clientFd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
+				
+				// Set non-blocking mode
+				int flags = fcntl(clientFd, F_GETFL, 0);
+				fcntl(clientFd, F_SETFL, flags | O_NONBLOCK);
 				
 				Connection* conn = new Connection(clientFd);
 				connections.push_back(conn);
@@ -264,12 +330,19 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 				{
 					bytes = read(conn->fd, buff, EIGHT_KB);
 					if (bytes <= 0)
+					{
+						if (bytes == 0) {
+							std::cout << "Client closed connection fd " << conn->fd << std::endl;
+						} else {
+							std::cout << "Read error on fd " << conn->fd << ": " << strerror(errno) << std::endl;
+						}
 						conn->closeConnection(conn, connections, epollFd);
+					}
 					else
 					{
 						if (!conn->req)
 							conn->req = new Request(conn->fd);
-
+						
 						conn->req->appendToBuffer(buff, bytes);
 						std::cout << "-----------------------------------\nState in req " << conn->fd << " : " << conn->req->getStatusCode() << "\n";
 						if (!conn->conServer)
@@ -292,21 +365,64 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 				{
 					if (conn->req)
 					{
+						
 						std::cout << "State in res : " << conn->req->getStatusCode() << "\n-----------------------------------\n";
 						
-						conn->res = ResponseHandler::handleRequest(conn);
-						std::string responseStr = conn->res.build();
-						std::cout << GREEN << "server_core 298 | status code | ==> " <<  conn->res.getStatusCode() << RESET << std::endl;
-						if (conn->req->getStatusCode() == OK)
-						{
-							std::string connectionHeader = conn->req->getRequestHeaders().getHeaderValue("connection");
-							if (!connectionHeader.empty() && connectionHeader != "close")
-								conn->shouldKeepAlive = true;
-						}
+						try {
+							conn->res = ResponseHandler::handleRequest(conn);
+							std::string responseStr = conn->res.build();
+							std::cout << GREEN << "server_core 298 | status code | ==> " <<  conn->res.getStatusCode() << RESET << std::endl;
+							
+							if (conn->req->getStatusCode() == OK)
+							{
+								std::string connectionHeader = conn->req->getRequestHeaders().getHeaderValue("connection");
+								if (!connectionHeader.empty() && connectionHeader != "close")
+									conn->shouldKeepAlive = true;
+							}
 
-						ssize_t sent = send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
-						if (sent == -1) {
-							std::cout << RED << "Error sending response to client " << conn->fd << RESET << std::endl;
+							// Handle streaming responses
+							if (conn->res.isStreaming() && !conn->res.getFilePath().empty()) {
+								// Send headers first
+								ssize_t sent = send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
+								if (sent == -1) {
+									std::cout << RED << "Error sending headers: " << strerror(errno) << RESET << std::endl;
+									handleConnectionError(conn, connections, epollFd, "Header send error");
+									continue;
+								}
+								
+								// Stream the file content
+								int fileFd = open(conn->res.getFilePath().c_str(), O_RDONLY);
+								if (fileFd == -1) {
+									std::cout << RED << "Error opening file for streaming: " << strerror(errno) << RESET << std::endl;
+									handleConnectionError(conn, connections, epollFd, "File open error");
+									continue;
+								}
+								
+								// Use sendfile for zero-copy file transfer
+								off_t offset = 0;
+								ssize_t fileSent = sendfile(conn->fd, fileFd, &offset, conn->res.getFileSize());
+								close(fileFd);
+								
+								if (fileSent == -1) {
+									std::cout << RED << "Error streaming file: " << strerror(errno) << RESET << std::endl;
+									handleConnectionError(conn, connections, epollFd, "File streaming error");
+									continue;
+								}
+								
+								std::cout << GREEN << "Streamed " << fileSent << " bytes from file" << RESET << std::endl;
+							} else {
+								// Regular response sending
+								ssize_t sent = send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
+								if (sent == -1) {
+									std::cout << RED << "Error sending response to client " << conn->fd << ": " << strerror(errno) << RESET << std::endl;
+									handleConnectionError(conn, connections, epollFd, "Send error");
+									continue;
+								}
+							}
+						} catch (const std::exception& e) {
+							std::cout << RED << "Exception in request handling: " << e.what() << RESET << std::endl;
+							handleConnectionError(conn, connections, epollFd, "Request handling exception");
+							continue;
 						}
 
 						if (conn->shouldKeepAlive)
@@ -323,6 +439,11 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 							conn->closeConnection(conn, connections, epollFd);
 						}
 					}
+				}
+				else if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP)
+				{
+					std::cout << "Connection error or hangup on fd " << conn->fd << std::endl;
+					conn->closeConnection(conn, connections, epollFd);
 				}
 			}
 		}

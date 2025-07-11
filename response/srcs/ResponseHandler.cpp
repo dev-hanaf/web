@@ -29,6 +29,8 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <errno.h>
+#include <sys/sendfile.h>
+#include <iomanip> // Required for std::setw and std::setfill
 
 // Helper function for toString
 static std::string toString(int number) {
@@ -116,22 +118,31 @@ Response ResponseHandler::handleRequest(Connection* conn) {
     const Request& request = *conn->req;
     std::string method = request.getRequestLine().getMethod();
     request.getRequestLine().getQueryParams();
+    // Get allowed methods from configuration
+    std::vector<std::string> allowedMethods = _getAllowedMethods(conn);
+    // Check if method is allowed (move this before any other validation)
+    std::cerr << "[DEBUG] Allowed methods for this resource: ";
+    for (size_t i = 0; i < allowedMethods.size(); ++i) std::cerr << allowedMethods[i] << " ";
+    std::cerr << "\n[DEBUG] Requested method: " << method << std::endl;
+    if (request.getStatusCode() == REQUEST_TIMEOUT)
+    {
+        std::cout << "TIME OUT" << std::endl;
+        return createErrorResponseWithMapping(conn, 408, "time out");
+    }
+    if (!_isAllowedMethod(method, allowedMethods)) {
+        return createMethodNotAllowedResponse(allowedMethods);
+    }
+    // If method is not allowed, return 405 immediately, even if request status is not OK
+    if (!_isAllowedMethod(method, allowedMethods)) {
+        return createMethodNotAllowedResponse(allowedMethods);
+    }
     // Check if request has any error status from parsing
     if (request.getStatusCode() != OK) {
         return createErrorResponseWithMapping(conn, request.getStatusCode(), "");
     }
     
-    // Get allowed methods from configuration
-    std::vector<std::string> allowedMethods = _getAllowedMethods(conn);
-    
-    // Check if method is allowed
-    if (!_isAllowedMethod(method, allowedMethods)) {
-        return createMethodNotAllowedResponse(allowedMethods);
-    }
-    
     // Check body size for POST requests
     if (method == "POST") {
-        std::cout << "i am in POST method\n";
         if (!conn->checkMaxBodySize()) {
             return createErrorResponseWithMapping(conn, 413, "Request entity too large");
         }
@@ -150,28 +161,50 @@ Response ResponseHandler::handleRequest(Connection* conn) {
 
 Response ResponseHandler::_handleGET(Connection* conn) {
     const Request& request = *conn->req;
-    std::string uri = request.getRequestLine().getUri();
+    std::string uri = request.getRequestLine().getUri(); // This is already clean (no query string)
     std::string root = _getRootPath(conn);
-    std::string path = uri;
-    // std::string queryString = _extractQueryString(uri);
-    std::string filePath = _buildFilePath(path, root);
+    
+    // Query string is already parsed and available via getQueryParams() for CGI
+    std::string filePath = _buildFilePath(uri, root);
 
-    // Check if it's a CGI script
-/*     if (_isCGIScript(filePath)) {
+/*     // Check if it's a CGI script
+    if (_isCGIScript(filePath)) {
         std::string cgiOutput = _executeCGI(filePath, request);
         if (!cgiOutput.empty()) {
+            // Parse CGI output to separate headers and body
+            std::map<std::string, std::string> cgiHeaders = _extractCGIHeaders(cgiOutput);
+            std::string cgiBody = _parseCGIOutput(cgiOutput);
+            
             Response response(200);
-            response.setBody(cgiOutput);
-            response.setContentType("text/html");
+            response.setBody(cgiBody);
+            
+            // Apply CGI headers
+            for (std::map<std::string, std::string>::const_iterator it = cgiHeaders.begin(); 
+                 it != cgiHeaders.end(); ++it) {
+                if (it->first != "Status") { // Skip Status header, we handle it separately
+                    response.addHeader(it->first, it->second);
+                }
+            }
+            
+            // Check for custom status code
+            if (cgiHeaders.find("Status") != cgiHeaders.end()) {
+                std::string statusStr = cgiHeaders["Status"];
+                size_t spacePos = statusStr.find(' ');
+                if (spacePos != std::string::npos) {
+                    int statusCode = atoi(statusStr.substr(0, spacePos).c_str());
+                    response.setStatus(statusCode);
+                }
+            }
+            
             return response;
         } else {
-            return createInternalErrorResponse();
+            return createErrorResponseWithMapping(conn, 500, "CGI execution failed");
         }
     } */
 
     struct stat fileStat;
     if (stat(filePath.c_str(), &fileStat) != 0) {
-        return createNotFoundResponse(conn);
+        return createErrorResponseWithMapping(conn, 404, "The requested resource was not found");
     }
 
     if (S_ISDIR(fileStat.st_mode)) {
@@ -198,19 +231,28 @@ Response ResponseHandler::_handleGET(Connection* conn) {
             response.setContentType("text/html");
             return response;
         } else {
-            return createForbiddenResponse();
+            std::cerr << "[DEBUG] Directory exists, autoindex off, returning 403 for: " << filePath << std::endl;
+            return createErrorResponseWithMapping(conn, 403, "Directory listing not allowed");
         }
     }
 
     // Serve static file
-    std::string content = loadFile(filePath);
-    if (!content.empty()) {
-        Response response(200);
-        response.setBody(content);
-        response.setContentType(_getMimeType(filePath));
-        return response;
+    std::string mimeType = _getMimeType(filePath);
+    
+    // Use direct file serving for better performance
+    if (_isFileServingSupported()) {
+        return _serveFileDirectly(filePath, mimeType);
     } else {
-        return createInternalErrorResponse();
+        // Fallback to memory-based serving
+        std::string content = loadFile(filePath);
+        if (!content.empty()) {
+            Response response(200);
+            response.setBody(content);
+            response.setContentType(mimeType);
+            return response;
+        } else {
+            return createErrorResponseWithMapping(conn, 500, "Failed to read file");
+        }
     }
 }
 
@@ -427,10 +469,82 @@ std::string ResponseHandler::_getMimeType(const std::string& path) {
     return "text/plain";
 }
 
+std::string ResponseHandler::_getFileExtension(const std::string& path) {
+    size_t dotPos = path.find_last_of('.');
+    if (dotPos != std::string::npos && dotPos < path.length() - 1) {
+        return path.substr(dotPos);
+    }
+    return "";
+}
+
+bool ResponseHandler::_isFileServingSupported() {
+    // Check if sendfile is available on this system
+    #ifdef __linux__
+        return true;
+    #else
+        return false;
+    #endif
+}
+
+Response ResponseHandler::_serveFileDirectly(const std::string& filePath, const std::string& mimeType) {
+    std::cout << "[DEBUG] Serving file: " << filePath << std::endl;
+    Response response(200);
+    response.setContentType(mimeType);
+    
+    // Get file size for Content-Length header
+    struct stat fileStat;
+    if (stat(filePath.c_str(), &fileStat) == 0) {
+        response.setFileSize(static_cast<size_t>(fileStat.st_size));
+        
+        // Use streaming for files larger than 1MB
+        const size_t STREAMING_THRESHOLD = 1024 * 1024; // 1MB
+        std::cout << "[DEBUG] File size: " << fileStat.st_size << std::endl;
+        if (static_cast<size_t>(fileStat.st_size) > STREAMING_THRESHOLD) {
+            response.setStreaming(true);
+            response.setFilePath(filePath);
+            std::cout << "[DEBUG] Using streaming for large file" << std::endl;
+            // Don't load the entire file into memory
+            return response;
+        }
+    } else {
+        std::cout << "[ERROR] stat() failed for file: " << filePath << " - " << strerror(errno) << std::endl;
+    }
+    
+    // For smaller files, load into memory
+    std::string content = loadFile(filePath);
+    if (!content.empty()) {
+        response.setBody(content);
+        std::cout << "[DEBUG] Loaded file into memory, size: " << content.size() << std::endl;
+    } else {
+        std::cout << "[ERROR] loadFile() returned empty for: " << filePath << std::endl;
+    }
+    
+    return response;
+}
+
 /* bool ResponseHandler::_isCGIScript(const std::string& path) {
-    return (path.find(".py") != std::string::npos || 
-            path.find(".cgi") != std::string::npos) && 
-           path.find("cgi-bin") != std::string::npos;
+    if (path.empty()) return false;
+    
+    // Check for common CGI file extensions
+    std::string lowerPath = path;
+    std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::tolower);
+    
+    // Check for CGI extensions
+    bool hasCGIExtension = (lowerPath.find(".py") != std::string::npos ||
+                           lowerPath.find(".cgi") != std::string::npos ||
+                           lowerPath.find(".php") != std::string::npos ||
+                           lowerPath.find(".pl") != std::string::npos);
+    
+    // Check if file is executable or in cgi-bin directory
+    bool isExecutable = false;
+    struct stat fileStat;
+    if (stat(path.c_str(), &fileStat) == 0) {
+        isExecutable = (fileStat.st_mode & S_IXUSR) != 0;
+    }
+    
+    bool inCGIBin = (lowerPath.find("cgi-bin") != std::string::npos);
+    
+    return hasCGIExtension && (isExecutable || inCGIBin);
 } */
 
 bool ResponseHandler::_isAllowedMethod(const std::string& method, const std::vector<std::string>& allowedMethods) {
@@ -580,24 +694,139 @@ std::string ResponseHandler::_getErrorPage(int statusCode, const std::map<int, s
     }
     
     return "";
-}
+} */
 
-std::map<std::string, std::string> ResponseHandler::_buildCGIEnvironment(const Request& request, const std::string& scriptPath) {
+/* std::map<std::string, std::string> ResponseHandler::_buildCGIEnvironment(const Request& request, const std::string& scriptPath) {
     std::map<std::string, std::string> env;
     
+    // Required CGI variables
     env["REQUEST_METHOD"] = request.getRequestLine().getMethod();
     env["REQUEST_URI"] = request.getRequestLine().getUri();
-    env["QUERY_STRING"] = _extractQueryString(request.getRequestLine().getUri());
+    // Reconstruct query string from getQueryParams()
+    const std::map<std::string, std::string>& params = request.getRequestLine().getQueryParams();
+    std::string queryString;
+    for (std::map<std::string, std::string>::const_iterator it = params.begin(); it != params.end(); ++it) {
+        if (it != params.begin()) queryString += "&";
+        queryString += it->first + "=" + it->second;
+    }
+    env["QUERY_STRING"] = queryString;
     env["SERVER_PROTOCOL"] = request.getRequestLine().getVersion();
+    
+    // Server information
+    env["SERVER_NAME"] = "localhost"; // Should come from configuration
+    env["SERVER_PORT"] = "8080"; // Should come from configuration
+    env["SERVER_SOFTWARE"] = "WebServ/1.1";
+    
+    // Script information
+    env["SCRIPT_NAME"] = scriptPath;
+    env["SCRIPT_FILENAME"] = scriptPath;
+    env["PATH_INFO"] = request.getRequestLine().getUri();
+    env["PATH_TRANSLATED"] = scriptPath;
+    
+    // Request headers (prefixed with HTTP_)
     env["HTTP_HOST"] = request.getRequestHeaders().getHeaderValue("host");
     env["HTTP_USER_AGENT"] = request.getRequestHeaders().getHeaderValue("user-agent");
     env["HTTP_ACCEPT"] = request.getRequestHeaders().getHeaderValue("accept");
+    env["HTTP_ACCEPT_LANGUAGE"] = request.getRequestHeaders().getHeaderValue("accept-language");
+    env["HTTP_ACCEPT_ENCODING"] = request.getRequestHeaders().getHeaderValue("accept-encoding");
+    env["HTTP_CONNECTION"] = request.getRequestHeaders().getHeaderValue("connection");
+    env["HTTP_REFERER"] = request.getRequestHeaders().getHeaderValue("referer");
+    
+    // Content information
     env["CONTENT_TYPE"] = request.getRequestHeaders().getHeaderValue("content-type");
     env["CONTENT_LENGTH"] = toString(request.getRequestBody().getContentLength());
-    env["SCRIPT_NAME"] = scriptPath;
-    env["PATH_INFO"] = _extractPath(request.getRequestLine().getUri());
+    
+    // Remote information
+    env["REMOTE_ADDR"] = "127.0.0.1"; // Should come from connection
+    env["REMOTE_HOST"] = "localhost";
+    env["REMOTE_PORT"] = "0"; // Should come from connection
+    
+    // Document information
+    env["DOCUMENT_ROOT"] = "www"; // Should come from configuration
+    env["DOCUMENT_URI"] = request.getRequestLine().getUri();
     
     return env;
+} */
+
+/* std::string ResponseHandler::_parseCGIOutput(const std::string& cgiOutput) {
+    // CGI output format: headers\r\n\r\nbody
+    size_t headerEnd = cgiOutput.find("\r\n\r\n");
+    if (headerEnd == std::string::npos) {
+        // Try \n\n as fallback
+        headerEnd = cgiOutput.find("\n\n");
+        if (headerEnd == std::string::npos) {
+            // No headers found, treat entire output as body
+            return cgiOutput;
+        }
+        headerEnd += 2;
+    } else {
+        headerEnd += 4;
+    }
+    
+    // Extract headers and body
+    std::string headers = cgiOutput.substr(0, headerEnd);
+    std::string body = cgiOutput.substr(headerEnd);
+    
+    // Parse CGI headers
+    std::map<std::string, std::string> cgiHeaders;
+    std::istringstream headerStream(headers);
+    std::string line;
+    
+    while (std::getline(headerStream, line) && !line.empty() && line != "\r") {
+        size_t colonPos = line.find(':');
+        if (colonPos != std::string::npos) {
+            std::string key = line.substr(0, colonPos);
+            std::string value = line.substr(colonPos + 1);
+            
+            // Trim whitespace
+            key.erase(0, key.find_first_not_of(" \t"));
+            key.erase(key.find_last_not_of(" \t\r") + 1);
+            value.erase(0, value.find_first_not_of(" \t"));
+            value.erase(value.find_last_not_of(" \t\r") + 1);
+            
+            cgiHeaders[key] = value;
+        }
+    }
+    
+    // Return the body (headers will be processed separately)
+    return body;
+} */
+
+/* std::map<std::string, std::string> ResponseHandler::_extractCGIHeaders(const std::string& cgiOutput) {
+    std::map<std::string, std::string> cgiHeaders;
+    
+    size_t headerEnd = cgiOutput.find("\r\n\r\n");
+    if (headerEnd == std::string::npos) {
+        headerEnd = cgiOutput.find("\n\n");
+        if (headerEnd == std::string::npos) {
+            return cgiHeaders;
+        }
+        headerEnd += 2;
+    } else {
+        headerEnd += 4;
+    }
+    
+    std::string headers = cgiOutput.substr(0, headerEnd);
+    std::istringstream headerStream(headers);
+    std::string line;
+    
+    while (std::getline(headerStream, line) && !line.empty() && line != "\r") {
+        size_t colonPos = line.find(':');
+        if (colonPos != std::string::npos) {
+            std::string key = line.substr(0, colonPos);
+            std::string value = line.substr(colonPos + 1);
+            
+            // Trim whitespace
+            key.erase(0, key.find_first_not_of(" \t"));
+            key.erase(key.find_last_not_of(" \t\r") + 1);
+            value.erase(0, value.find_first_not_of(" \t"));
+            value.erase(value.find_last_not_of(" \t\r") + 1);
+            
+            cgiHeaders[key] = value;
+        }
+    }
+    
+    return cgiHeaders;
 } */
 
 // File operations
@@ -640,26 +869,45 @@ std::string ResponseHandler::_urlEncode(const std::string& str) {
     return result;
 } */
 
-/* std::string ResponseHandler::_extractQueryString(const std::string& uri) {
-    size_t pos = uri.find('?');
-    if (pos != std::string::npos) {
-        return uri.substr(pos + 1);
+std::string ResponseHandler::_urlDecode(const std::string& str) {
+    std::string result;
+    for (size_t i = 0; i < str.length(); ++i) {
+        if (str[i] == '%' && i + 2 < str.length()) {
+            int value;
+            std::istringstream iss(str.substr(i + 1, 2));
+            iss >> std::hex >> value;
+            result += static_cast<char>(value);
+            i += 2;
+        } else if (str[i] == '+') {
+            result += ' ';
+        } else {
+            result += str[i];
+        }
     }
-    return "";
+    return result;
 }
 
-std::string ResponseHandler::_extractPath(const std::string& uri) {
-    size_t pos = uri.find('?');
-    if (pos != std::string::npos) {
-        return uri.substr(0, pos);
+std::string ResponseHandler::_urlEncode(const std::string& str) {
+    std::string result;
+    for (size_t i = 0; i < str.length(); ++i) {
+        char c = str[i];
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            result += c;
+        } else if (c == ' ') {
+            result += '+';
+        } else {
+            std::ostringstream oss;
+            oss << '%' << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(static_cast<unsigned char>(c));
+            result += oss.str();
+        }
     }
-    return uri;
-} */
-
+    return result;
+}
 
 std::string ResponseHandler::_handleFileUpload(const Request& request, const std::string& uploadPath) {
     std::string contentType = request.getRequestHeaders().getHeaderValue("content-type");
     std::string body = request.getRequestBody().getRawData();
+    std::cout << "[DEBUG] Upload handler: content-type=" << contentType << ", body size=" << body.size() << std::endl;
     
     if (contentType.find("multipart/form-data") != std::string::npos) {
         // Parse multipart data
@@ -674,30 +922,37 @@ std::string ResponseHandler::_handleFileUpload(const Request& request, const std
                     size_t endPos = body.find(boundary, pos);
                     if (endPos != std::string::npos) {
                         std::string fileData = body.substr(pos, endPos - pos - 2);
-                        
-                        // Generate unique filename
                         std::string filename = "upload_" + toString(time(NULL)) + ".txt";
                         std::string filepath = uploadPath + "/" + filename;
-                        
-                        // Create upload directory if it doesn't exist
+                        std::cout << "[DEBUG] Writing upload to: " << filepath << ", size=" << fileData.size() << std::endl;
                         if (mkdir(uploadPath.c_str(), 0755) != 0 && errno != EEXIST) {
-                            return ""; // Failed to create directory
+                            std::cout << "[ERROR] Failed to create upload dir: " << strerror(errno) << std::endl;
+                            return "";
                         }
-                        
-                        // Write file
                         std::ofstream file(filepath.c_str());
                         if (file.is_open()) {
                             file.write(fileData.c_str(), fileData.length());
                             file.close();
-                            
+                            std::cout << "[DEBUG] Upload write success" << std::endl;
                             return "<html><head><title>File Uploaded</title></head><body><h1>File Uploaded Successfully</h1><p>File saved as: " + filename + "</p></body></html>";
+                        } else {
+                            std::cout << "[ERROR] Failed to open file for writing: " << filepath << std::endl;
                         }
+                    } else {
+                        std::cout << "[ERROR] End boundary not found in body" << std::endl;
                     }
+                } else {
+                    std::cout << "[ERROR] Multipart header/body separator not found" << std::endl;
                 }
+            } else {
+                std::cout << "[ERROR] Boundary not found in body" << std::endl;
             }
+        } else {
+            std::cout << "[ERROR] Boundary not found in content-type" << std::endl;
         }
+    } else {
+        std::cout << "[ERROR] Not multipart/form-data: " << contentType << std::endl;
     }
-    
     return "";
 }
 // Error response helpers
@@ -716,6 +971,7 @@ Response ResponseHandler::createMethodNotAllowedResponse(const std::vector<std::
     response.setAllow(methods);
     response.setBody("<html><head><title>405 Method Not Allowed</title></head><body><h1>405 Method Not Allowed</h1><p>The requested method is not allowed.</p></body></html>");
     response.setContentType("text/html");
+    std::cerr << "[DEBUG] Returning 405 Method Not Allowed:\n" << response.build() << std::endl;
     return response;
 }
 
@@ -754,11 +1010,20 @@ Response ResponseHandler::createErrorResponseWithMapping(Connection* conn, int s
                     Response response(statusCode);
                     response.setBody(content);
                     response.setContentType(_getMimeType(errorPath));
+                    std::cerr << "[DEBUG] Returning custom error page for " << statusCode << ":\n" << response.build() << std::endl;
                     return response;
                 }
             }
         }
     }
-    // Fallback to built-in error
-    return Response::createErrorResponse(statusCode, message);
+    // Fallback to built-in error for 403
+    if (statusCode == 403) {
+        Response response = Response::createErrorResponse(403, message);
+        std::cerr << "[DEBUG] Returning built-in 403 error:\n" << response.build() << std::endl;
+        return response;
+    }
+    // Fallback to built-in error for others
+    Response response = Response::createErrorResponse(statusCode, message);
+    std::cerr << "[DEBUG] Returning built-in error " << statusCode << ":\n" << response.build() << std::endl;
+    return response;
 } 

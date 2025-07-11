@@ -179,46 +179,61 @@ ClientMaxBodySize*	Connection::getClientMaxBodySize()
 
 const Location* Connection::getLocation() const
 {
-	if (!conServer)
-		return NULL;
-	std::string reqUri;
-	if (req && req->getRequestLine().getUri().size())
-		reqUri = req->getRequestLine().getUri();
-	else if (!uri.empty())
-		reqUri = uri;
-	else
-		return NULL;
+    if (!conServer)
+        return NULL;
+    std::string reqUri;
+    if (req && req->getRequestLine().getUri().size())
+        reqUri = req->getRequestLine().getUri();
+    else if (!uri.empty())
+        reqUri = uri;
+    else
+        return NULL;
 
-	const Location* bestLoc = NULL;
-	size_t bestMatchLen = 0;
-	for (std::vector<IDirective*>::const_iterator it = conServer->directives.begin(); it != conServer->directives.end(); ++it) {
-		if ((*it)->getType() != LOCATION)
-			continue;
-		const Location* loc = static_cast<const Location*>(*it);
-		if (!loc) continue;
-		char* locUri = loc->getUri();
-		bool exact = loc->isExactMatch();
-		if (!locUri) continue;
-		std::string locUriStr(locUri);
-		std::cout << "[getLocation] reqUri: '" << reqUri << "' locUri: '" << locUriStr << "' exact: " << exact << std::endl;
-		if (exact) {
-			if (reqUri == locUriStr) {
-				std::cout << "[getLocation] Exact match found!" << std::endl;
-				return loc;
-			}
-		} else {
-			if (!locUriStr.empty() && reqUri.find(locUriStr) == 0 && locUriStr.length() > bestMatchLen) {
-				bestMatchLen = locUriStr.length();
-				bestLoc = loc;
-			}
-		}
-	}
-	if (bestLoc) {
-		std::cout << "[getLocation] Prefix match found!" << std::endl;
-		return bestLoc;
-	}
-	std::cout << "[getLocation] No match found." << std::endl;
-	return NULL;
+    // First, check for exact match (file-level or exact location)
+    for (std::vector<IDirective*>::const_iterator it = conServer->directives.begin(); it != conServer->directives.end(); ++it) {
+        if ((*it)->getType() != LOCATION)
+            continue;
+        const Location* loc = static_cast<const Location*>(*it);
+        if (!loc) continue;
+        char* locUri = loc->getUri();
+        if (!locUri) continue;
+        std::string locUriStr(locUri);
+        if (locUriStr == reqUri) {
+            // std::cout << "[getLocation] Exact file/location match found!" << std::endl;
+            return loc;
+        }
+    }
+
+    // Then, check for best prefix match
+    const Location* bestLoc = NULL;
+    size_t bestMatchLen = 0;
+    for (std::vector<IDirective*>::const_iterator it = conServer->directives.begin(); it != conServer->directives.end(); ++it) {
+        if ((*it)->getType() != LOCATION)
+            continue;
+        const Location* loc = static_cast<const Location*>(*it);
+        if (!loc) continue;
+        char* locUri = loc->getUri();
+        bool exact = loc->isExactMatch();
+        if (!locUri) continue;
+        std::string locUriStr(locUri);
+        if (exact) {
+            if (reqUri == locUriStr) {
+                // std::cout << "[getLocation] Exact match found!" << std::endl;
+                return loc;
+            }
+        } else {
+            if (!locUriStr.empty() && reqUri.find(locUriStr) == 0 && locUriStr.length() > bestMatchLen) {
+                bestMatchLen = locUriStr.length();
+                bestLoc = loc;
+            }
+        }
+    }
+    if (bestLoc) {
+        // std::cout << "[getLocation] Prefix match found!" << std::endl;
+        return bestLoc;
+    }
+    // std::cout << "[getLocation] No match found." << std::endl;
+    return NULL;
 }
 
 const Location* Connection::getLocation()
@@ -244,10 +259,10 @@ const Location* Connection::getLocation()
 		bool exact = loc->isExactMatch();
 		if (!locUri) continue;
 		std::string locUriStr(locUri);
-		std::cout << "[getLocation] reqUri: '" << reqUri << "' locUri: '" << locUriStr << "' exact: " << exact << std::endl;
+		// std::cout << "[getLocation] reqUri: '" << reqUri << "' locUri: '" << locUriStr << "' exact: " << exact << std::endl;
 		if (exact) {
 			if (reqUri == locUriStr) {
-				std::cout << "[getLocation] Exact match found!" << std::endl;
+				// std::cout << "[getLocation] Exact match found!" << std::endl;
 				return loc;
 			}
 		} else {
@@ -258,10 +273,10 @@ const Location* Connection::getLocation()
 		}
 	}
 	if (bestLoc) {
-		std::cout << "[getLocation] Prefix match found!" << std::endl;
+		// std::cout << "[getLocation] Prefix match found!" << std::endl;
 		return bestLoc;
 	}
-	std::cout << "[getLocation] No match found." << std::endl;
+	// std::cout << "[getLocation] No match found." << std::endl;
 	return NULL;
 }
 
@@ -285,35 +300,42 @@ Root*	Connection::getRoot()
 	return NULL;
 }
 
-AutoIndex*	Connection::getAutoIndex()
+AutoIndex* Connection::getAutoIndex()
 {
-	AutoIndex*	autoindex = static_cast<AutoIndex*>(getDirective(AUTOINDEX));
-	if (autoindex) {
-		std::cout << "autoindex  -> " << autoindex->getState() << std::endl;
-		return autoindex;
-	}
-	
-	// Check location context if not found in server
-	const Location* location = getLocation();
-	if (location) {
-		for (std::vector<IDirective*>::const_iterator dit = location->directives.begin(); 
-		dit != location->directives.end(); ++dit) 
-		{
-			if ((*dit)->getType() == AUTOINDEX) {
-				AutoIndex* locAutoIndex = static_cast<AutoIndex*>(*dit);
-				if (locAutoIndex) {
-					std::cout << "autoindex (location) -> " << locAutoIndex->getState() << std::endl;
-					return locAutoIndex;
-				}
-			}
-		}
-	}
-	return NULL;
+    // Check location context first
+    const Location* location = getLocation();
+    if (location) {
+        // std::cout << "[DEBUG] Location directives for URI: ";
+        char* locUri = location->getUri();
+        if (locUri) std::cout << locUri << std::endl;
+        for (std::vector<IDirective*>::const_iterator dit = location->directives.begin(); 
+        dit != location->directives.end(); ++dit) 
+        {
+            // std::cout << "[DEBUG] Location directive type: " << (*dit)->getType() << std::endl;
+            if ((*dit)->getType() == AUTOINDEX) {
+                AutoIndex* locAutoIndex = static_cast<AutoIndex*>(*dit);
+                if (locAutoIndex) {
+                    // std::cout << "autoindex (location) -> " << locAutoIndex->getState() << std::endl;
+                    return locAutoIndex;
+                }
+            }
+        }
+    }
+    // Then check server context
+    AutoIndex* autoindex = static_cast<AutoIndex*>(getDirective(AUTOINDEX));
+    if (autoindex) {
+        // std::cout << "autoindex  -> " << autoindex->getState() << std::endl;
+        return autoindex;
+    }
+    // Default to off
+    static AutoIndex defaultOff;
+    defaultOff.setState(false);
+    return &defaultOff;
 }
 
 Return* Connection::getReturnDirective() const {
 	const Location* location = getLocation();
-	std::cout << "location -> " << location << std::endl;
+	// std::cout << "location -> " << location << std::endl;
 	if (location) {
 		IDirective* dir = location->getDirective(RETURN);
 		if (dir) {

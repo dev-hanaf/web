@@ -28,6 +28,7 @@ class	RequestBody
 
 		bool				_parseChunkSize();
 		bool				_processChunkData();
+		void				_processTrailerHeaders(const std::string& trailer_headers);
 
 		void				_cleanupTempFile();
 		void				_reWriteTempFile();
