@@ -324,7 +324,7 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 			else
 			{
 				conn = conn->findConnectionByFd(events[i].data.fd, connections);
-				if (!conn)
+				if (!conn || conn->closed)
 					continue;
 
 				if (events[i].events & EPOLLIN)
@@ -338,6 +338,8 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 							std::cout << "Read error on fd " << conn->fd << ": " << strerror(errno) << std::endl;
 						}
 						conn->closeConnection(conn, connections, epollFd);
+						conn = NULL;
+						continue;
 					}
 					else
 					{
@@ -385,6 +387,7 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 							ssize_t sent = send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
 							if (sent == -1) {
 								handleConnectionError(conn, connections, epollFd, "Header send error");
+								conn = NULL;
 								continue;
 							}
 							// Send file if present
@@ -396,23 +399,32 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 								}
 								char fileBuf[8192];
 								ssize_t bytesRead;
+								bool fileSendError = false;
 								while ((bytesRead = read(fileFd, fileBuf, sizeof(fileBuf))) > 0) {
-									ssize_t bytesSent = send(conn->fd, fileBuf, bytesRead, 0);
-									if (bytesSent == -1) {
-										close(fileFd);
-										handleConnectionError(conn, connections, epollFd, "File send error");
-										break;
+									ssize_t totalSent = 0;
+									while (totalSent < bytesRead) {
+										ssize_t bytesSent = send(conn->fd, fileBuf + totalSent, bytesRead - totalSent, 0);
+										if (bytesSent == -1) {
+											close(fileFd);
+											handleConnectionError(conn, connections, epollFd, "File send error");
+											fileSendError = true;
+											break;
+										}
+										totalSent += bytesSent;
 									}
+									if (fileSendError) break;
 								}
 								close(fileFd);
 								const std::string& fp = conn->res.getFilePath();
 								if (fp.find("tmp/response/") == 0) {
 									remove(fp.c_str());
 								}
+								if (fileSendError) continue;
 							}
 						} catch (const std::exception& e) {
 							std::cout << RED << "Exception in request handling: " << e.what() << RESET << std::endl;
 							handleConnectionError(conn, connections, epollFd, "Request handling exception");
+							conn = NULL;
 							continue;
 						}
 
@@ -428,6 +440,7 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 						{
 							std::cout << GREEN << "close connectoion " << conn->fd  << RESET << "\n";
 							conn->closeConnection(conn, connections, epollFd);
+							conn = NULL;
 						}
 					}
 				}
@@ -435,6 +448,7 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 				{
 					std::cout << "Connection error or hangup on fd " << conn->fd << std::endl;
 					conn->closeConnection(conn, connections, epollFd);
+					conn = NULL;
 				}
 			}
 		}

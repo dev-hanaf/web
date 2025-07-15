@@ -25,6 +25,7 @@ class   Connection
 		Server			*conServer;
 		bool			shouldKeepAlive;
 		time_t			lastTimeoutCheck;
+		bool			closed;
 
 
 		Connection();

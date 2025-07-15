@@ -20,22 +20,22 @@
 #include <unistd.h>
 #include <dirent.h>
 
-std::string ResponseHandler::getRootPath(Connection* conn) {
+std::string ResponseHandler::_getRootPath(Connection* conn) {
     if (!conn) return "www";
     Root* root = conn->getRoot();
     if (root && root->getPath()) return std::string(root->getPath());
     return "www";
 }
-std::string ResponseHandler::getUploadPath(Connection*) {
+std::string ResponseHandler::_getUploadPath(Connection*) {
     return "uploads";
 }
-bool ResponseHandler::getAutoIndex(Connection* conn) {
+bool ResponseHandler::_getAutoIndex(Connection* conn) {
     if (!conn) return false;
     AutoIndex* autoindex = conn->getAutoIndex();
     if (autoindex) return autoindex->getState();
     return false;
 }
-std::vector<std::string> ResponseHandler::getAllowedMethods(Connection* conn) {
+std::vector<std::string> ResponseHandler::_getAllowedMethods(Connection* conn) {
     std::vector<std::string> methods;
     if (!conn) {
         methods.push_back("GET");
@@ -59,7 +59,7 @@ std::vector<std::string> ResponseHandler::getAllowedMethods(Connection* conn) {
     }
     return methods;
 }
-std::vector<std::string> ResponseHandler::getIndexFiles(Connection* conn) {
+std::vector<std::string> ResponseHandler::_getIndexFiles(Connection* conn) {
     std::vector<std::string> indexFiles;
     if (!conn) {
         indexFiles.push_back("index.html");
@@ -81,7 +81,7 @@ std::vector<std::string> ResponseHandler::getIndexFiles(Connection* conn) {
     }
     return indexFiles;
 }
-std::map<int, std::string> ResponseHandler::getErrorPages(Connection* conn) {
+std::map<int, std::string> ResponseHandler::_getErrorPages(Connection* conn) {
     std::map<int, std::string> errorPages;
     if (!conn) return errorPages;
     const Location* location = conn->getLocation();
@@ -105,11 +105,11 @@ std::map<int, std::string> ResponseHandler::getErrorPages(Connection* conn) {
     }
     return errorPages;
 }
-std::string ResponseHandler::getErrorPage(int code, const std::map<int, std::string>& e) {
+std::string ResponseHandler::_getErrorPage(int code, const std::map<int, std::string>& e) {
     std::map<int, std::string>::const_iterator it = e.find(code);
     return it != e.end() ? it->second : std::string();
 }
-std::string ResponseHandler::buildFilePath(const std::string& uri, const std::string& root) {
+std::string ResponseHandler::_buildFilePath(const std::string& uri, const std::string& root) {
     if (root.empty()) return uri;
     std::string path = root;
     if (path[path.length() - 1] != '/') path += "/";
@@ -118,11 +118,11 @@ std::string ResponseHandler::buildFilePath(const std::string& uri, const std::st
     path += cleanUri;
     return path;
 }
-bool ResponseHandler::isAllowedMethod(const std::string& method, const std::vector<std::string>& allowedMethods) {
+bool ResponseHandler::_isAllowedMethod(const std::string& method, const std::vector<std::string>& allowedMethods) {
     if (method.empty()) return false;
     return std::find(allowedMethods.begin(), allowedMethods.end(), method) != allowedMethods.end();
 }
-std::string ResponseHandler::generateDirectoryListing(const std::string& path, const std::string& uri) {
+std::string ResponseHandler::_generateDirectoryListing(const std::string& path, const std::string& uri) {
     DIR* dir = opendir(path.c_str());
     if (!dir) return "";
     std::string html = "<html><head><title>Index of " + uri + "</title></head><body><h1>Index of " + uri + "</h1><hr><ul>";
@@ -259,7 +259,7 @@ static std::map<std::string, std::string> createMimeTypeMap() {
   return mimeMap;
 }
 static std::map<std::string, std::string> mimeTypes = createMimeTypeMap();
-std::string ResponseHandler::getMimeType(const std::string& path) {
+std::string ResponseHandler::_getMimeType(const std::string& path) {
     size_t dotPos = path.find_last_of('.');
     if (dotPos != std::string::npos) {
         std::string ext = path.substr(dotPos);
@@ -274,12 +274,12 @@ Response ResponseHandler::handleRequest(Connection* conn) {
     if (!conn || !conn->req) return ErrorResponse::createInternalErrorResponse();
     const Request& request = *conn->req;
     std::string method = request.getRequestLine().getMethod();
-    std::vector<std::string> allowed = getAllowedMethods(conn);
+    std::vector<std::string> allowed = _getAllowedMethods(conn);
     if (std::find(allowed.begin(), allowed.end(), method) == allowed.end())
         return ErrorResponse::createMethodNotAllowedResponse(allowed);
-    std::string root = getRootPath(conn);
+    std::string root = _getRootPath(conn);
     std::string uri = request.getRequestLine().getUri();
-    std::string filePath = buildFilePath(uri, root);
+    std::string filePath = _buildFilePath(uri, root);
     std::cout << "root -> " << root << std::endl;
     std::cout << "uri -> " << uri << std::endl;
     std::cout << "filepath -> " << filePath << std::endl;
@@ -287,21 +287,21 @@ Response ResponseHandler::handleRequest(Connection* conn) {
         struct stat fileStat;
         if (stat(filePath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode))
             return FileResponse::serve(filePath, MimeTypes::get(filePath));
-        std::vector<std::string> indexFiles = getIndexFiles(conn);
+        std::vector<std::string> indexFiles = _getIndexFiles(conn);
         for (size_t i = 0; i < indexFiles.size(); ++i) {
             std::cout << "index file " << indexFiles[i] << std::endl;
             std::string idxPath = filePath + "/" + indexFiles[i];
             if (stat(idxPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode))
                 return FileResponse::serve(idxPath, MimeTypes::get(idxPath));
         }
-        if (getAutoIndex(conn)) {
+        if (_getAutoIndex(conn)) {
             std::cout << "auto index is on" << std::endl;
-            std::string listing = DirectoryListing::generate(filePath, uri);
-            std::string tmpFile = generateDirectoryListing(filePath, uri);
+            std::string listing = _generateDirectoryListing(filePath, uri);
+            std::string tmpFile = _generateDirectoryListing(filePath, uri);
             return FileResponse::serve(tmpFile, "text/html");
         }
-        std::map<int, std::string> errorPages = getErrorPages(conn);
-        std::string errPage = getErrorPage(404, errorPages);
+        std::map<int, std::string> errorPages = _getErrorPages(conn);
+        std::string errPage = _getErrorPage(404, errorPages);
         if (!errPage.empty()) {
             struct stat epStat;
             if (stat(errPage.c_str(), &epStat) == 0)
@@ -311,7 +311,7 @@ Response ResponseHandler::handleRequest(Connection* conn) {
     }
     if (method == "POST") {
         std::string tmpFile = request.getRequestBody().getRawData();
-        std::string uploadDir = getUploadPath(conn);
+        std::string uploadDir = _getUploadPath(conn);
         mkdir(uploadDir.c_str(), 0755);
         std::string uploadPath = uploadDir + "/upload_" + std::string("TODO_TIMESTAMP");
         if (rename(tmpFile.c_str(), uploadPath.c_str()) == 0) {
@@ -319,8 +319,8 @@ Response ResponseHandler::handleRequest(Connection* conn) {
             if (stat(uploadPath.c_str(), &upStat) == 0)
                 return FileResponse::serve(uploadPath, MimeTypes::get(uploadPath), 201);
         }
-        std::map<int, std::string> errorPages = getErrorPages(conn);
-        std::string errPage = getErrorPage(500, errorPages);
+        std::map<int, std::string> errorPages = _getErrorPages(conn);
+        std::string errPage = _getErrorPage(500, errorPages);
         if (!errPage.empty()) {
             struct stat epStat;
             if (stat(errPage.c_str(), &epStat) == 0)
@@ -331,10 +331,10 @@ Response ResponseHandler::handleRequest(Connection* conn) {
     if (method == "DELETE") {
         struct stat fileStat;
         if (stat(filePath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
-            if (filePath.find(root) == 0 || filePath.find(getUploadPath(conn)) == 0) {
+            if (filePath.find(root) == 0 || filePath.find(_getUploadPath(conn)) == 0) {
                 if (remove(filePath.c_str()) == 0) return Response(204);
-                std::map<int, std::string> errorPages = getErrorPages(conn);
-                std::string errPage = getErrorPage(500, errorPages);
+                std::map<int, std::string> errorPages = _getErrorPages(conn);
+                std::string errPage = _getErrorPage(500, errorPages);
                 if (!errPage.empty()) {
                     struct stat epStat;
                     if (stat(errPage.c_str(), &epStat) == 0)
@@ -342,8 +342,8 @@ Response ResponseHandler::handleRequest(Connection* conn) {
                 }
                 return ErrorResponse::createInternalErrorResponse();
             }
-            std::map<int, std::string> errorPages = getErrorPages(conn);
-            std::string errPage = getErrorPage(403, errorPages);
+            std::map<int, std::string> errorPages = _getErrorPages(conn);
+            std::string errPage = _getErrorPage(403, errorPages);
             if (!errPage.empty()) {
                 struct stat epStat;
                 if (stat(errPage.c_str(), &epStat) == 0)
@@ -351,8 +351,8 @@ Response ResponseHandler::handleRequest(Connection* conn) {
             }
             return ErrorResponse::createForbiddenResponse();
         }
-        std::map<int, std::string> errorPages = getErrorPages(conn);
-        std::string errPage = getErrorPage(404, errorPages);
+        std::map<int, std::string> errorPages = _getErrorPages(conn);
+        std::string errPage = _getErrorPage(404, errorPages);
         if (!errPage.empty()) {
             struct stat epStat;
             if (stat(errPage.c_str(), &epStat) == 0)
