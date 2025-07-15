@@ -19,6 +19,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <fstream>
+#include <sstream>
 
 std::string ResponseHandler::_getRootPath(Connection* conn) {
     if (!conn) return "www";
@@ -270,6 +272,7 @@ std::string ResponseHandler::_getMimeType(const std::string& path) {
 }
 Response ResponseHandler::handleRequest(Connection* conn) {
     Return* ret = conn ? conn->getReturnDirective() : NULL;
+    if (ret) std::cout << RED << ret->getUrl() << RESET <<  std::endl;
     if (ret) return ReturnHandler::handle(conn);
     if (!conn || !conn->req) return ErrorResponse::createInternalErrorResponse();
     const Request& request = *conn->req;
@@ -280,34 +283,97 @@ Response ResponseHandler::handleRequest(Connection* conn) {
     std::string root = _getRootPath(conn);
     std::string uri = request.getRequestLine().getUri();
     std::string filePath = _buildFilePath(uri, root);
-    std::cout << "root -> " << root << std::endl;
-    std::cout << "uri -> " << uri << std::endl;
-    std::cout << "filepath -> " << filePath << std::endl;
     if (method == "GET") {
         struct stat fileStat;
-        if (stat(filePath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode))
-            return FileResponse::serve(filePath, MimeTypes::get(filePath));
-        std::vector<std::string> indexFiles = _getIndexFiles(conn);
-        for (size_t i = 0; i < indexFiles.size(); ++i) {
-            std::cout << "index file " << indexFiles[i] << std::endl;
-            std::string idxPath = filePath + "/" + indexFiles[i];
-            if (stat(idxPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode))
-                return FileResponse::serve(idxPath, MimeTypes::get(idxPath));
+        if (stat(filePath.c_str(), &fileStat) != 0) {
+            std::cout << "i am out from here "  << filePath.c_str() << std::endl;
+            return ErrorResponse::createErrorResponseWithMapping(conn, 404, "The requested resource was not found");
         }
-        if (_getAutoIndex(conn)) {
-            std::cout << "auto index is on" << std::endl;
-            std::string listing = _generateDirectoryListing(filePath, uri);
-            std::string tmpFile = _generateDirectoryListing(filePath, uri);
-            return FileResponse::serve(tmpFile, "text/html");
+
+        if (S_ISDIR(fileStat.st_mode)) {
+            std::vector<std::string> indexFiles = _getIndexFiles(conn);
+            for (size_t i = 0; i < indexFiles.size(); ++i) {
+                std::string indexPath = filePath + "/" + indexFiles[i];
+                if (stat(indexPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+                    std::ifstream in(indexPath.c_str(), std::ios::binary);
+                    if (in) {
+                        std::string dir = _getRootPath(conn);
+                        if (dir.empty()) dir = "wwwww";
+                        struct stat st;
+                        if (stat(dir.c_str(), &st) == -1) {
+                            mkdir(dir.c_str(), 0755);
+                        }
+                        std::stringstream ss;
+                        ss << dir << "/indexfile_" << getpid() << ".tmp";
+                        std::string tmpFile = ss.str();
+                        std::ofstream out(tmpFile.c_str(), std::ios::binary);
+                        out << in.rdbuf();
+                        in.close();
+                        out.close();
+                        struct stat tmpStat;
+                        if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
+                            Response response(200);
+                            response.setFilePath(tmpFile);
+                            response.setContentType(_getMimeType(indexPath));
+                            response.setFileSize(static_cast<size_t>(tmpStat.st_size));
+                            return response;
+                        }
+                    }
+                }
+            }
+            bool autoIndex = _getAutoIndex(conn);
+            if (autoIndex) {
+                std::string listing = _generateDirectoryListing(filePath, uri);
+                std::string dir = _getRootPath(conn);
+                if (dir.empty()) dir = "www";
+                struct stat st;
+                if (stat(dir.c_str(), &st) == -1) {
+                    mkdir(dir.c_str(), 0755);
+                }
+                std::stringstream ss;
+                ss << dir << "/autoindex_" << getpid() << ".html";
+                std::string tmpFile = ss.str();
+                std::ofstream out(tmpFile.c_str());
+                out << listing;
+                out.close();
+                struct stat tmpStat;
+                if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
+                    Response response(200);
+                    response.setFilePath(tmpFile);
+                    response.setContentType("text/html");
+                    response.setFileSize(static_cast<size_t>(tmpStat.st_size));
+                    return response;
+                }
+            } else {
+                return ErrorResponse::createErrorResponseWithMapping(conn, 403, "Directory listing not allowed");
+            }
         }
-        std::map<int, std::string> errorPages = _getErrorPages(conn);
-        std::string errPage = _getErrorPage(404, errorPages);
-        if (!errPage.empty()) {
-            struct stat epStat;
-            if (stat(errPage.c_str(), &epStat) == 0)
-                return FileResponse::serve(errPage, MimeTypes::get(errPage), 404);
+        std::string mimeType = _getMimeType(filePath);
+        std::ifstream in(filePath.c_str(), std::ios::binary);
+        if (in) {
+            std::string dir = _getRootPath(conn);
+            if (dir.empty()) dir = "www";
+            struct stat st;
+            if (stat(dir.c_str(), &st) == -1) {
+                mkdir(dir.c_str(), 0755);
+            }
+            std::stringstream ss;
+            ss << dir << "/file_" << getpid() << ".tmp";
+            std::string tmpFile = ss.str();
+            std::ofstream out(tmpFile.c_str(), std::ios::binary);
+            out << in.rdbuf();
+            in.close();
+            out.close();
+            struct stat tmpStat;
+            if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
+                Response response(200);
+                response.setFilePath(tmpFile);
+                response.setContentType(mimeType);
+                response.setFileSize(static_cast<size_t>(tmpStat.st_size));
+                return response;
+            }
         }
-        return ErrorResponse::createNotFoundResponse(conn);
+        return ErrorResponse::createErrorResponseWithMapping(conn, 500, "Failed to read file");
     }
     if (method == "POST") {
         std::string tmpFile = request.getRequestBody().getRawData();
@@ -362,4 +428,5 @@ Response ResponseHandler::handleRequest(Connection* conn) {
     }
     return ErrorResponse::createInternalErrorResponse();
 }
+
 void ResponseHandler::initialize() {} 

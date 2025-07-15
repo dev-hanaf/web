@@ -189,11 +189,6 @@ const Location* Connection::getLocation() const
     else
         return NULL;
 
-    // Normalize request URI (remove trailing slash except for "/")
-    std::string reqUriNorm = reqUri;
-    if (reqUriNorm.length() > 1 && reqUriNorm[reqUriNorm.length()-1] == '/')
-        reqUriNorm.erase(reqUriNorm.length()-1);
-
     // First, check for exact match (file-level or exact location)
     for (std::vector<IDirective*>::const_iterator it = conServer->directives.begin(); it != conServer->directives.end(); ++it) {
         if ((*it)->getType() != LOCATION)
@@ -203,16 +198,9 @@ const Location* Connection::getLocation() const
         char* locUri = loc->getUri();
         if (!locUri) continue;
         std::string locUriStr(locUri);
-        std::string locUriNorm = locUriStr;
-        if (locUriNorm.length() > 1 && locUriNorm[locUriNorm.length()-1] == '/')
-            locUriNorm.erase(locUriNorm.length()-1);
-        bool exact = loc->isExactMatch();
-        std::cout << "[DEBUG] Comparing reqUriNorm: '" << reqUriNorm << "' with locUriNorm: '" << locUriNorm << "' | exactMatch: " << (exact ? "true" : "false") << std::endl;
-        if (exact) {
-            if (reqUriNorm == locUriNorm) {
-                std::cout << "[DEBUG] Exact match found!" << std::endl;
-                return loc;
-            }
+        if (locUriStr == reqUri) {
+            std::cout << "[getLocation] Exact file/location match found!" << std::endl;
+            return loc;
         }
     }
 
@@ -228,22 +216,23 @@ const Location* Connection::getLocation() const
         bool exact = loc->isExactMatch();
         if (!locUri) continue;
         std::string locUriStr(locUri);
-        std::string locUriNorm = locUriStr;
-        if (locUriNorm.length() > 1 && locUriNorm[locUriNorm.length()-1] == '/')
-            locUriNorm.erase(locUriNorm.length()-1);
-        if (!exact) {
-            if (!locUriNorm.empty() && reqUriNorm.find(locUriNorm) == 0 && locUriNorm.length() > bestMatchLen) {
-                std::cout << "[DEBUG] Prefix match candidate: reqUriNorm: '" << reqUriNorm << "' starts with locUriNorm: '" << locUriNorm << "'" << std::endl;
-                bestMatchLen = locUriNorm.length();
+        if (exact) {
+            if (reqUri == locUriStr) {
+                std::cout << "[getLocation] Exact match found!" << std::endl;
+                return loc;
+            }
+        } else {
+            if (!locUriStr.empty() && reqUri.find(locUriStr) == 0 && locUriStr.length() > bestMatchLen) {
+                bestMatchLen = locUriStr.length();
                 bestLoc = loc;
             }
         }
     }
     if (bestLoc) {
-        std::cout << "[DEBUG] Prefix match found!" << std::endl;
+        std::cout << "[getLocation] Prefix match found!" << std::endl;
         return bestLoc;
     }
-    std::cout << "[DEBUG] No location match found for reqUriNorm: '" << reqUriNorm << "'" << std::endl;
+    std::cout << "[getLocation] No match found." << std::endl;
     return NULL;
 }
 
@@ -270,10 +259,10 @@ const Location* Connection::getLocation()
 		bool exact = loc->isExactMatch();
 		if (!locUri) continue;
 		std::string locUriStr(locUri);
-		// std::cout << "[getLocation] reqUri: '" << reqUri << "' locUri: '" << locUriStr << "' exact: " << exact << std::endl;
+		std::cout << "[getLocation] reqUri: '" << reqUri << "' locUri: '" << locUriStr << "' exact: " << exact << std::endl;
 		if (exact) {
 			if (reqUri == locUriStr) {
-				// std::cout << "[getLocation] Exact match found!" << std::endl;
+				std::cout << "[getLocation] Exact match found!" << std::endl;
 				return loc;
 			}
 		} else {
@@ -284,10 +273,10 @@ const Location* Connection::getLocation()
 		}
 	}
 	if (bestLoc) {
-		// std::cout << "[getLocation] Prefix match found!" << std::endl;
+		std::cout << "[getLocation] Prefix match found!" << std::endl;
 		return bestLoc;
 	}
-	// std::cout << "[getLocation] No match found." << std::endl;
+	std::cout << "[getLocation] No match found." << std::endl;
 	return NULL;
 }
 

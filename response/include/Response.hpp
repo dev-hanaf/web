@@ -65,5 +65,8 @@ class Response
         const std::string& getStatusMessage() const { return _statusMessage; }
         const std::string& getFilePath() const { return _filePath; }
         size_t getFileSize() const { return _fileSize; }
+
+        static Response createRedirectResponse(int statusCode, const std::string& location);
+
         void clear();
 };

@@ -1,4 +1,5 @@
 #include "../include/Response.hpp"
+#include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <sys/stat.h>
@@ -138,4 +139,18 @@ void Response::setFileSize(size_t size) {
     _isBuilt = false;
 }
 
-
+Response Response::createRedirectResponse(int statusCode, const std::string& location) {
+    Response response(statusCode);
+    response.addHeader("Location", location);
+    response.setContentType("text/html");
+    
+    std::string tempPath = "/tmp/webserv_redirect.html";
+    std::ofstream tempFile(tempPath.c_str());
+    tempFile << "<html><head><title>Redirect</title></head><body>"
+             << "<h1>Redirect</h1><p>The document has moved <a href=\"" 
+             << location << "\">here</a>.</p></body></html>";
+    tempFile.close();
+    
+    response.setFileBody(tempPath);
+    return response;
+}

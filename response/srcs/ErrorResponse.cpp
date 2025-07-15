@@ -2,13 +2,44 @@
 #include "../../Connection.hpp"
 #include "../../conf/ErrorPage.hpp"
 #include <sys/stat.h>
+#include <fstream>
+#include <sstream>
+#include <cstdlib>
+#include <ctime>
+#include <unistd.h>
+
+static std::string getDefaultErrorFile(int statusCode) {
+    std::stringstream ss;
+    ss << "wwwww/error_" << statusCode << ".html";
+    return ss.str();
+}
+
+static void setDefaultErrorFile(Response& response, int statusCode) {
+    std::string file = getDefaultErrorFile(statusCode);
+    struct stat fileStat;
+    if (stat(file.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+        response.setFilePath(file);
+        response.setContentType("text/html");
+        response.setFileSize(static_cast<size_t>(fileStat.st_size));
+    } else {
+        std::ofstream f(file.c_str());
+        f << "Error " << statusCode << ": Sorry, an error (" << statusCode << ") occurred." << std::endl;
+        f.close();
+        if (stat(file.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+            response.setFilePath(file);
+            response.setContentType("text/html");
+            response.setFileSize(static_cast<size_t>(fileStat.st_size));
+        }
+    }
+}
+
 Response ErrorResponse::createErrorResponse(int statusCode, const std::string& message) {
     (void)message;
     Response response(statusCode);
-    response.setContentType("text/html");
-    response.setFileBody("");
+    setDefaultErrorFile(response, statusCode);
     return response;
 }
+
 Response ErrorResponse::createErrorResponseWithMapping(Connection* conn, int statusCode, const std::string& message) {
     if (conn) {
         ErrorPage* ep = conn->getErrorPageForCode(statusCode);
@@ -31,6 +62,7 @@ Response ErrorResponse::createErrorResponseWithMapping(Connection* conn, int sta
     }
     return createErrorResponse(statusCode, message);
 }
+
 Response ErrorResponse::createMethodNotAllowedResponse(const std::vector<std::string>& allowedMethods) {
     Response response(405);
     std::string methods;
@@ -39,10 +71,10 @@ Response ErrorResponse::createMethodNotAllowedResponse(const std::vector<std::st
         methods += allowedMethods[i];
     }
     response.addHeader("Allow", methods);
-    response.setContentType("text/html");
-    response.setFileBody("");
+    setDefaultErrorFile(response, 405);
     return response;
 }
+
 Response ErrorResponse::createNotFoundResponse(Connection* conn) {
     return createErrorResponseWithMapping(conn, 404, "Not Found");
 }
