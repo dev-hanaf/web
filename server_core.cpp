@@ -30,6 +30,7 @@
 # include "request/incs/Request.hpp"
 # include "response/include/Response.hpp"
 # include "response/include/ResponseHandler.hpp"
+# include "response/include/ErrorResponse.hpp"
 
 # define	NONESSENTIAL	101
 # define	MAX_EVENTS		512
@@ -248,7 +249,7 @@ void	handleConnectionError(Connection* conn, std::vector<Connection*>& connectio
 	
 	// Send error response if possible
 	if (conn->req) {
-		conn->res = ResponseHandler::createInternalErrorResponse();
+		conn->res = ErrorResponse::createInternalErrorResponse();
 		std::string responseStr = conn->res.build();
 		send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
 	}
@@ -380,43 +381,33 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 									conn->shouldKeepAlive = true;
 							}
 
-							// Handle streaming responses
-							if (conn->res.isStreaming() && !conn->res.getFilePath().empty()) {
-								// Send headers first
-								ssize_t sent = send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
-								if (sent == -1) {
-									std::cout << RED << "Error sending headers: " << strerror(errno) << RESET << std::endl;
-									handleConnectionError(conn, connections, epollFd, "Header send error");
-									continue;
-								}
-								
-								// Stream the file content
+							// Send headers
+							ssize_t sent = send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
+							if (sent == -1) {
+								handleConnectionError(conn, connections, epollFd, "Header send error");
+								continue;
+							}
+							// Send file if present
+							if (!conn->res.getFilePath().empty()) {
 								int fileFd = open(conn->res.getFilePath().c_str(), O_RDONLY);
 								if (fileFd == -1) {
-									std::cout << RED << "Error opening file for streaming: " << strerror(errno) << RESET << std::endl;
 									handleConnectionError(conn, connections, epollFd, "File open error");
 									continue;
 								}
-								
-								// Use sendfile for zero-copy file transfer
-								off_t offset = 0;
-								ssize_t fileSent = sendfile(conn->fd, fileFd, &offset, conn->res.getFileSize());
-								close(fileFd);
-								
-								if (fileSent == -1) {
-									std::cout << RED << "Error streaming file: " << strerror(errno) << RESET << std::endl;
-									handleConnectionError(conn, connections, epollFd, "File streaming error");
-									continue;
+								char fileBuf[8192];
+								ssize_t bytesRead;
+								while ((bytesRead = read(fileFd, fileBuf, sizeof(fileBuf))) > 0) {
+									ssize_t bytesSent = send(conn->fd, fileBuf, bytesRead, 0);
+									if (bytesSent == -1) {
+										close(fileFd);
+										handleConnectionError(conn, connections, epollFd, "File send error");
+										break;
+									}
 								}
-								
-								std::cout << GREEN << "Streamed " << fileSent << " bytes from file" << RESET << std::endl;
-							} else {
-								// Regular response sending
-								ssize_t sent = send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
-								if (sent == -1) {
-									std::cout << RED << "Error sending response to client " << conn->fd << ": " << strerror(errno) << RESET << std::endl;
-									handleConnectionError(conn, connections, epollFd, "Send error");
-									continue;
+								close(fileFd);
+								const std::string& fp = conn->res.getFilePath();
+								if (fp.find("tmp/response/") == 0) {
+									remove(fp.c_str());
 								}
 							}
 						} catch (const std::exception& e) {
