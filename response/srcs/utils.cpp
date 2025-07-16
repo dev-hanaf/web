@@ -4,36 +4,60 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <cstdlib>
 #include <ctime>
 #include <cerrno>
-#include <cstring> // for memset
+#include <cstring>
 
 std::string loadFile(const std::string& path) {
-    // Ensure tmp/response directory exists
     std::string dir = "tmp/response";
     struct stat st;
     memset(&st, 0, sizeof(st));
     if (stat(dir.c_str(), &st) == -1) {
-        mkdir("tmp", 0755); // Try to create tmp if not exists
+        mkdir("tmp", 0755);
         mkdir(dir.c_str(), 0755);
     }
 
-    // Generate random filename
+    if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+        return "";
+    if (access(path.c_str(), R_OK) != 0)
+        return "";
+
     std::srand(std::time(0) ^ getpid());
     std::stringstream ss;
     ss << dir << "/resp_" << std::rand() << ".tmp";
     std::string filename = ss.str();
 
-    std::ifstream src(path.c_str(), std::ios::binary);
-    if (!src.is_open())
+    int srcFd = open(path.c_str(), O_RDONLY);
+    if (srcFd == -1)
         return "";
-    std::ofstream dst(filename.c_str(), std::ios::binary);
-    if (!dst.is_open())
+    int dstFd = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dstFd == -1) {
+        close(srcFd);
         return "";
-    dst << src.rdbuf();
-    src.close();
-    dst.close();
+    }
+    char buf[8192];
+    ssize_t bytesRead;
+    while ((bytesRead = read(srcFd, buf, sizeof(buf))) > 0) {
+        ssize_t totalWritten = 0;
+        while (totalWritten < bytesRead) {
+            ssize_t bytesWritten = write(dstFd, buf + totalWritten, bytesRead - totalWritten);
+            if (bytesWritten == -1) {
+                close(srcFd);
+                close(dstFd);
+                unlink(filename.c_str());
+                return "";
+            }
+            totalWritten += bytesWritten;
+        }
+    }
+    close(srcFd);
+    close(dstFd);
+    if (bytesRead < 0) {
+        unlink(filename.c_str());
+        return "";
+    }
     return filename;
 }
 

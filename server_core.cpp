@@ -397,29 +397,38 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 									handleConnectionError(conn, connections, epollFd, "File open error");
 									continue;
 								}
-								char fileBuf[8192];
+								char fileBuf[EIGHT_KB];
 								ssize_t bytesRead;
 								bool fileSendError = false;
-								while ((bytesRead = read(fileFd, fileBuf, sizeof(fileBuf))) > 0) {
-									ssize_t totalSent = 0;
-									while (totalSent < bytesRead) {
-										ssize_t bytesSent = send(conn->fd, fileBuf + totalSent, bytesRead - totalSent, 0);
-										if (bytesSent == -1) {
-											close(fileFd);
-											handleConnectionError(conn, connections, epollFd, "File send error");
-											fileSendError = true;
-											break;
-										}
-										totalSent += bytesSent;
-									}
-									if (fileSendError) break;
+								bytesRead =  read(fileFd, fileBuf, sizeof(fileBuf));
+								if (bytesRead == 0)
+									return;
+									//done
+								if (bytesRead == -1) {
+									close(fileFd);
+									handleConnectionError(conn, connections, epollFd, "File send error");
+									fileSendError = true;
+									break;
 								}
-								close(fileFd);
-								const std::string& fp = conn->res.getFilePath();
-								if (fp.find("tmp/response/") == 0) {
-									remove(fp.c_str());
-								}
-								if (fileSendError) continue;
+							
+								conn->res.cursor += bytesRead; 
+
+								// while ((bytesRead = read(fileFd, fileBuf, sizeof(fileBuf))) > 0) {
+								// 	ssize_t totalSent = 0;
+								// 	while (totalSent < bytesRead) {
+								// 		ssize_t bytesSent = send(conn->fd, fileBuf + totalSent, bytesRead - totalSent, 0);
+								// 		if (bytesSent == -1) {
+								// 			close(fileFd);
+								// 			handleConnectionError(conn, connections, epollFd, "File send error");
+								// 			fileSendError = true;
+								// 			break;
+								// 		}
+								// 		totalSent += bytesSent;
+								// 	}
+								// 	if (fileSendError) break;
+								// }
+								// close(fileFd);
+								// if (fileSendError) continue;
 							}
 						} catch (const std::exception& e) {
 							std::cout << RED << "Exception in request handling: " << e.what() << RESET << std::endl;

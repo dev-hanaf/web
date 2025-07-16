@@ -5,11 +5,11 @@
 #include <sys/stat.h>
 #include <ctime>
 
-Response::Response() : _statusCode(200), _statusMessage("OK"), _fileSize(0), _isBuilt(false) {
+Response::Response() : _statusCode(200), _statusMessage("OK"), _fileSize(0), _isBuilt(false), cursor(0) {
     _addDefaultHeaders();
 }
 
-Response::Response(int statusCode) : _statusCode(statusCode), _statusMessage(_getStatusMessage(statusCode)), _fileSize(0), _isBuilt(false) {
+Response::Response(int statusCode) : _statusCode(statusCode), _statusMessage(_getStatusMessage(statusCode)), _fileSize(0), _isBuilt(false) , cursor(0){
     _addDefaultHeaders();
 }
 

@@ -3,6 +3,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <sys/types.h>
 #include <vector>
 
 
@@ -51,6 +52,7 @@ class Response
         void _addDefaultHeaders();
         std::string _getStatusMessage(int code) const;
     public:
+        ssize_t cursor;
         Response();
         Response(int statusCode);
         ~Response();
