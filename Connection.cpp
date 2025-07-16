@@ -355,22 +355,22 @@ Return* Connection::getReturnDirective() const {
 }
 
 Index* Connection::getIndex() {
-	Index* index = static_cast<Index*>(getDirective(INDEX));
-	if (index)
-		return index;
-	
-	// Check location context if not found in server
-	const Location* location = getLocation();
-	if (location) {
-		for (std::vector<IDirective*>::const_iterator dit = location->directives.begin(); 
-		dit != location->directives.end(); ++dit) 
-		{
-			if ((*dit)->getType() == INDEX) {
-				return static_cast<Index*>(*dit);
-			}
-		}
-	}
-	return NULL;
+    // Check location context first
+    const Location* location = getLocation();
+    if (location) {
+        for (std::vector<IDirective*>::const_iterator dit = location->directives.begin(); 
+        dit != location->directives.end(); ++dit) 
+        {
+            if ((*dit)->getType() == INDEX) {
+                return static_cast<Index*>(*dit);
+            }
+        }
+    }
+    // Then check server context
+    Index* index = static_cast<Index*>(getDirective(INDEX));
+    if (index)
+        return index;
+    return NULL;
 }
 
 ErrorPage* Connection::getErrorPage() {
