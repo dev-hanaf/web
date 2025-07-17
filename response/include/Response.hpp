@@ -53,6 +53,7 @@ class Response
         std::string _getStatusMessage(int code) const;
     public:
         ssize_t cursor;
+        int fileFd; // File descriptor for chunked file sending
         Response();
         Response(int statusCode);
         ~Response();

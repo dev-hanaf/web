@@ -286,8 +286,10 @@ Response ResponseHandler::handleRequest(Connection* conn) {
     std::string filePath = _buildFilePath(uri, root);
     if (method == "GET") {
         struct stat fileStat;
-        if (stat(filePath.c_str(), &fileStat) != 0) {
-            std::cout << RED << filePath << " " << "file opened" << RESET  <<std::endl;
+        filePath = "home/ahanaf/lenovo/www/test.html";
+        std::cout << RED << "[" << filePath  << "]" <<  RESET  <<std::endl;
+        if (stat(filePath.c_str(), &fileStat) == 0) {
+        std::cout <<  " open with stat"    << std::endl;
             Response response(200);
             response.setFilePath(filePath);
             response.setContentType(_getMimeType(filePath));

@@ -368,21 +368,17 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 				{
 					if (conn->req)
 					{
-						
 						std::cout << "State in res : " << conn->req->getStatusCode() << "\n-----------------------------------\n";
-						
 						try {
 							conn->res = ResponseHandler::handleRequest(conn);
 							std::string responseStr = conn->res.build();
 							std::cout << GREEN << "server_core 298 | status code | ==> " <<  conn->res.getStatusCode() << RESET << std::endl;
-							
 							if (conn->req->getStatusCode() == OK)
 							{
 								std::string connectionHeader = conn->req->getRequestHeaders().getHeaderValue("connection");
 								if (!connectionHeader.empty() && connectionHeader != "close")
 									conn->shouldKeepAlive = true;
 							}
-
 							// Send headers
 							ssize_t sent = send(conn->fd, responseStr.c_str(), responseStr.size(), 0);
 							if (sent == -1) {
@@ -394,8 +390,15 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 							if (!conn->res.getFilePath().empty()) {
 								int fileFd = open(conn->res.getFilePath().c_str(), O_RDONLY);
 								if (fileFd == -1) {
+									std::cout << strerror(errno) << std::endl;
 									handleConnectionError(conn, connections, epollFd, "File open error");
 									continue;
+								}
+								if (lseek(fileFd, conn->res.cursor, SEEK_SET) == -1) {
+									std::cerr << "lseek error: " << strerror(errno) << std::endl;
+									close(fileFd);
+									handleConnectionError(conn, connections, epollFd, "Seek failed");
+									return;
 								}
 								char fileBuf[EIGHT_KB];
 								ssize_t bytesRead;
@@ -410,25 +413,9 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 									fileSendError = true;
 									break;
 								}
-							
+								send(conn->fd, fileBuf, bytesRead, 0 );
 								conn->res.cursor += bytesRead; 
-
-								// while ((bytesRead = read(fileFd, fileBuf, sizeof(fileBuf))) > 0) {
-								// 	ssize_t totalSent = 0;
-								// 	while (totalSent < bytesRead) {
-								// 		ssize_t bytesSent = send(conn->fd, fileBuf + totalSent, bytesRead - totalSent, 0);
-								// 		if (bytesSent == -1) {
-								// 			close(fileFd);
-								// 			handleConnectionError(conn, connections, epollFd, "File send error");
-								// 			fileSendError = true;
-								// 			break;
-								// 		}
-								// 		totalSent += bytesSent;
-								// 	}
-								// 	if (fileSendError) break;
-								// }
-								// close(fileFd);
-								// if (fileSendError) continue;
+								close(fileFd);
 							}
 						} catch (const std::exception& e) {
 							std::cout << RED << "Exception in request handling: " << e.what() << RESET << std::endl;
@@ -436,7 +423,6 @@ void	serverLoop(Http* http, std::vector<int>& sockets, int epollFd)
 							conn = NULL;
 							continue;
 						}
-
 						if (conn->shouldKeepAlive)
 						{
 							std::cout << GREEN << "conn shouldKeepAlive" << RESET << std::endl;

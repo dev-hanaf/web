@@ -4,16 +4,27 @@
 #include <algorithm>
 #include <sys/stat.h>
 #include <ctime>
+#include <unistd.h>
 
-Response::Response() : _statusCode(200), _statusMessage("OK"), _fileSize(0), _isBuilt(false), cursor(0) {
+Response::Response()
+    : _statusCode(200), _statusMessage("OK"), _isBuilt(false), cursor(0), fileFd(-1)
+{
     _addDefaultHeaders();
 }
 
-Response::Response(int statusCode) : _statusCode(statusCode), _statusMessage(_getStatusMessage(statusCode)), _fileSize(0), _isBuilt(false) , cursor(0){
+Response::Response(int statusCode)
+    : _statusCode(statusCode), _statusMessage(_getStatusMessage(statusCode)), _isBuilt(false), cursor(0), fileFd(-1)
+{
     _addDefaultHeaders();
 }
 
-Response::~Response() {}
+Response::~Response()
+{
+    if (fileFd != -1) {
+        close(fileFd);
+        fileFd = -1;
+    }
+}
 
 void Response::_addDefaultHeaders() {
     _headers["Server"] = "WebServ/1.0";
@@ -92,13 +103,18 @@ std::string Response::build() {
     if (_headers.find("Server") == _headers.end()) {
         _headers["Server"] = "WebServ/1.1";
     }
-    if (_statusCode != 204 && _statusCode != 304) {
-        if (_headers.find("Content-Length") == _headers.end()) {
-            std::ostringstream oss;
-            oss << _fileSize;
-            _headers["Content-Length"] = oss.str();
-        }
-    }
+
+
+    std::ostringstream oss;
+    oss << _fileSize;
+    _headers["Content-Length"] = oss.str();
+    // if (_statusCode != 204 && _statusCode != 304) {
+    //     if (_headers.find("Content-Length") == _headers.end()) {
+    //         std::ostringstream oss;
+    //         oss << _fileSize;
+    //         _headers["Content-Length"] = oss.str();
+    //     }
+    // }
     if (_statusCode != 204 && _statusCode != 304 && !_filePath.empty()) {
         if (_headers.find("Content-Type") == _headers.end()) {
             _headers["Content-Type"] = "text/plain";
