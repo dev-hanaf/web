@@ -30,7 +30,8 @@ private:
     static std::map<int, std::string> _getErrorPages(Connection* conn);
     static std::vector<std::string> _getAllowedMethods(Connection* conn);
     static std::vector<std::string> _getIndexFiles(Connection* conn);
-    static std::string _buildFilePath(const std::string& uri, const std::string& root);
+    static std::string _buildFilePath(const std::string& uri, const std::string& root,  const Location* location);
+    // static std::string _buildFilePath(const std::string& uri, const std::string& root);
     static std::string _getMimeType(const std::string& path);
     static std::string _getFileExtension(const std::string& path);
     static bool _isFileServingSupported();

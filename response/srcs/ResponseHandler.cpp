@@ -105,10 +105,25 @@ bool ResponseHandler::_isAllowedMethod(const std::string& method, const std::vec
     if (method.empty()) return false;
     return std::find(allowedMethods.begin(), allowedMethods.end(), method) != allowedMethods.end();
 }
-std::string ResponseHandler::_buildFilePath(const std::string& uri, const std::string& root) {
-    if (root.empty()) return uri;
+// std::string ResponseHandler::_buildFilePath(const std::string& uri, const std::string& root) {
+//     if (root.empty()) return uri;
+//     std::string path = root;
+//     if (path[path.length() - 1] != '/') path += "/";
+//     std::string cleanUri = uri;
+//     if (!cleanUri.empty() && cleanUri[0] == '/') cleanUri = cleanUri.substr(1);
+//     path += cleanUri;
+//     return path;
+// }
+
+std::string ResponseHandler::_buildFilePath(const std::string& uri, const std::string& root, const Location* location) {
     std::string path = root;
-    if (path[path.length() - 1] != '/') path += "/";
+    if (!path.empty() && path[path.length() - 1] != '/') path += "/";
+
+    // If location is exact match (like = /images), don't append URI
+    if (location && location->isExactMatch()) {
+        return path; // Just the root, e.g., "www/"
+    }
+
     std::string cleanUri = uri;
     if (!cleanUri.empty() && cleanUri[0] == '/') cleanUri = cleanUri.substr(1);
     path += cleanUri;
@@ -186,8 +201,10 @@ Response ResponseHandler::handleRequest(Connection* conn)
         root = std::string(locRoot->getPath());
     else
         root = _getRootPath(conn);
+    std::cout << CYAN << root <<  RESET << std::endl;
     std::string uri = request.getRequestLine().getUri();
-    std::string filePath = _buildFilePath(uri, root);
+    std::string filePath = _buildFilePath(uri, root, location);
+    std::cout << CYAN << filePath <<  RESET << std::endl;
     struct stat fileStat;
     bool isDir = false;
     if (stat(filePath.c_str(), &fileStat) == 0 && S_ISDIR(fileStat.st_mode)) isDir = true;
@@ -195,6 +212,7 @@ Response ResponseHandler::handleRequest(Connection* conn)
     if (isDir) {
         for (size_t i = 0; i < indexFiles.size(); ++i) {
             std::string indexPath = filePath + "/" + indexFiles[i];
+            std::cout << CYAN << indexPath <<  RESET << std::endl;
             if (stat(indexPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
                 return FileResponse::serve(indexPath, _getMimeType(indexPath), 200);
             }
