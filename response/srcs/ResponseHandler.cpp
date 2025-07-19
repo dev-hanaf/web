@@ -95,7 +95,7 @@ std::vector<std::string> ResponseHandler::_getAllowedMethods(Connection* conn) {
                 methods.push_back(std::string(allowedMethods[i]));
             }
         }
-    }
+    }else {std::cout << BRED << "means that limitexcept == NULL" << RESET << std::endl;}
     if (methods.empty()) {
         methods.push_back("GET");
     }
@@ -176,12 +176,76 @@ std::string ResponseHandler::_generateDirectoryListing(const std::string& path, 
     closedir(dir);
     return html;
 }
+
+#include <fstream>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <string>
+#include <cstring>
+#include <cerrno>
+
+
+bool copydir(    const std::string& sourcePath,
+    const std::string& destDir,
+    const std::string& destFilename = ""
+) {
+    // Check if source file exists
+    struct stat sourceStat;
+    if (stat(sourcePath.c_str(), &sourceStat) != 0 || !S_ISREG(sourceStat.st_mode)) {
+        std::cerr << RED << "Source file does not exist: " << sourcePath << RESET << std::endl;
+        return false;
+    }
+
+    // Determine destination filename
+    std::string filename = destFilename;
+    if (filename.empty()) {
+        size_t lastSlash = sourcePath.find_last_of('/');
+        if (lastSlash != std::string::npos) {
+            filename = sourcePath.substr(lastSlash + 1);
+        } else {
+            filename = sourcePath;
+        }
+    }
+
+    std::string destPath = destDir;
+    if (!destPath.empty() && destPath[destPath.size() - 1] != '/') destPath += "/";
+    destPath += filename;
+
+    std::ifstream srcFile(sourcePath.c_str(), std::ios::binary);
+    if (!srcFile.is_open()) {
+        std::cerr << RED << "Failed to open source file: " << sourcePath << RESET << std::endl;
+        return false;
+    }
+
+    // Open destination file
+    std::ofstream dstFile(destPath.c_str(), std::ios::binary | std::ios::trunc);
+    if (!dstFile.is_open()) {
+        std::cerr << RED << "Failed to create destination file: " << destPath << RESET << std::endl;
+        srcFile.close();
+        return false;
+    }
+
+    // Copy file contents
+    dstFile << srcFile.rdbuf();
+
+    // Close files
+    srcFile.close();
+    dstFile.close();
+
+    std::cout << GREEN << "Copied: " << sourcePath << " → " << destPath << RESET << std::endl;
+    return true;
+}
+
+
 Response ResponseHandler::handleRequest(Connection* conn) 
 {
     if (!conn || !conn->req) return ErrorResponse::createInternalErrorResponse();
     const Request& request = *conn->req;
     std::string method = request.getRequestLine().getMethod();
     std::vector<std::string> allowed = _getAllowedMethods(conn);
+    for (std::vector<std::string>::const_iterator it = allowed.begin(); it != allowed.end(); it++)
+        std::cout <<BGREEN << (*it) << RESET << std::endl;
+
     if (!_isAllowedMethod(method, allowed))
         return ErrorResponse::createMethodNotAllowedResponse(conn ,allowed);
     const Location* location = conn->getLocation();
@@ -205,47 +269,61 @@ Response ResponseHandler::handleRequest(Connection* conn)
     std::string uri = request.getRequestLine().getUri();
     std::string filePath = _buildFilePath(uri, root, location);
     std::cout << CYAN << filePath <<  RESET << std::endl;
-    struct stat fileStat;
-    bool isDir = false;
-    if (stat(filePath.c_str(), &fileStat) == 0 && S_ISDIR(fileStat.st_mode)) isDir = true;
-    std::vector<std::string> indexFiles = _getIndexFiles(conn);
-    if (isDir) {
-        for (size_t i = 0; i < indexFiles.size(); ++i) {
-            std::string indexPath = filePath + "/" + indexFiles[i];
-            std::cout << CYAN << indexPath <<  RESET << std::endl;
-            if (stat(indexPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
-                return FileResponse::serve(indexPath, _getMimeType(indexPath), 200);
+    if (method == "GET") {
+        struct stat fileStat;
+        bool isDir = false;
+        if (stat(filePath.c_str(), &fileStat) == 0 && S_ISDIR(fileStat.st_mode)) isDir = true;
+        std::vector<std::string> indexFiles = _getIndexFiles(conn);
+        if (isDir) {
+            for (size_t i = 0; i < indexFiles.size(); ++i) {
+                std::string indexPath = filePath + "/" + indexFiles[i];
+                std::cout << CYAN << indexPath <<  RESET << std::endl;
+                if (stat(indexPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+                    return FileResponse::serve(indexPath, _getMimeType(indexPath), 200);
+                }
             }
         }
-    }
-    if (isDir) {
-        if (_getAutoIndex(conn)) {
-            std::string listing = _generateDirectoryListing(filePath, uri);
-            std::string dir = root.empty() ? "www" : root;
-            std::stringstream ss;
-            ss << dir << "/autoindex_" << getpid() << ".html";
-            std::string tmpFile = ss.str();
-            std::ofstream out(tmpFile.c_str());
-            out << listing;
-            out.close();
-            struct stat tmpStat;
-            if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
-                return FileResponse::serve(tmpFile, "text/html", 200);
+        if (isDir) {
+            if (_getAutoIndex(conn)) {
+                std::string listing = _generateDirectoryListing(filePath, uri);
+                std::string dir = root.empty() ? "www" : root;
+                std::stringstream ss;
+                ss << dir << "/autoindex_" << getpid() << ".html";
+                std::string tmpFile = ss.str();
+                std::ofstream out(tmpFile.c_str());
+                out << listing;
+                out.close();
+                struct stat tmpStat;
+                if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
+                    return FileResponse::serve(tmpFile, "text/html", 200);
+                }
+            }
+            return ErrorResponse::createForbiddenResponse();
+        }
+        if (stat(filePath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+            return FileResponse::serve(filePath, _getMimeType(filePath), 200);
+        }
+        std::map<int, std::string> errorPages = _getErrorPages(conn);
+        int errCode = 404;
+        std::string errPage = errorPages[errCode];
+        if (!errPage.empty()) {
+            if (stat(errPage.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+                return FileResponse::serve(errPage, _getMimeType(errPage), errCode);
             }
         }
-        return ErrorResponse::createForbiddenResponse();
+        return ErrorResponse::createNotFoundResponse(conn);
     }
-    if (stat(filePath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
-        return FileResponse::serve(filePath, _getMimeType(filePath), 200);
+    else if (method == "POST")
+    {
+        std::string tempPath = conn->req->getRequestBody().uploadpath; // e.g., "/tmp/upload.tmp"
+        std::string destDir = "www/uploads"; // Destination directory
+
+        // Copy the uploaded file
+        if (copydir(tempPath, destDir)) {
+            return FileResponse::serve("www/201.html", "text/html", 201); // Success
+        return ErrorResponse::createInternalErrorResponse(); // Failed to copy
     }
-    std::map<int, std::string> errorPages = _getErrorPages(conn);
-    int errCode = 404;
-    std::string errPage = errorPages[errCode];
-    if (!errPage.empty()) {
-        if (stat(errPage.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
-            return FileResponse::serve(errPage, _getMimeType(errPage), errCode);
-        }
-    }
+}
     return ErrorResponse::createNotFoundResponse(conn);
 }
-void ResponseHandler::initialize() {} 
+void ResponseHandler::initialize() {}

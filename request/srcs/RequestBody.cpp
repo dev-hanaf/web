@@ -214,6 +214,7 @@ bool	RequestBody::isCompleted() const
 }
 # include <iostream>
 
+
 bool	ensureUploadDirExists(const std::string& dir)
 {
 	static bool created = false;
@@ -280,6 +281,7 @@ bool RequestBody::_extractFileFromMultipart()
 	
 	std::cerr << "File uploaded successfully: " << upload_path 
 			  << " (" << file_content.size() << " bytes)\n";
+	uploadpath = upload_path;
 	return true;
 }
 

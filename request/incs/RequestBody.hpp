@@ -40,7 +40,7 @@ class	RequestBody
 	public:
 		RequestBody();
 		~RequestBody();
-		
+		std::string uploadpath ;
 		void				clear();
 
 		bool				isParsed() const;
