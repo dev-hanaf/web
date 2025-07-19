@@ -13,7 +13,6 @@ Response ReturnHandler::handle(Connection* conn) {
     bool applyReturn = false;
     if (loc && loc->getDirective(RETURN) == ret) {
         std::string locUri = loc->getUri() ? std::string(loc->getUri()) : "";
-        std::cout << RED << "location uri -> " << locUri << std::endl;
         if (loc->isExactMatch()) {
             if (reqUri == locUri) applyReturn = true;
         } else {
@@ -25,16 +24,18 @@ Response ReturnHandler::handle(Connection* conn) {
     if (applyReturn) {
         unsigned int code = ret->getCode();
         char* url = ret->getUrl();
+        std::string urlStr = url ? std::string(url) : "";
         if (code >= 300 && code < 400 && url && url[0]) {
-            return Response::createRedirectResponse(code, std::string(url));
+            if (!urlStr.empty() && urlStr[0] != '/') urlStr = "/" + urlStr;
+            return Response::createRedirectResponse(code, urlStr);
         } else if (code >= 400 && code < 600) {
             if (url && url[0] == '/') {
                 std::string root = conn && conn->getRoot() && conn->getRoot()->getPath() ? std::string(conn->getRoot()->getPath()) : "www";
                 std::string filePath = root;
                 if (filePath[filePath.length() - 1] != '/') filePath += "/";
-                std::string urlStr(url);
-                if (urlStr[0] == '/') urlStr = urlStr.substr(1);
-                filePath += urlStr;
+                std::string urlStr2(url);
+                if (urlStr2[0] == '/') urlStr2 = urlStr2.substr(1);
+                filePath += urlStr2;
                 struct stat fileStat;
                 if (stat(filePath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
                     return FileResponse::serve(filePath, "text/html", code);

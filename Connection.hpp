@@ -26,6 +26,9 @@ class   Connection
 		bool			shouldKeepAlive;
 		time_t			lastTimeoutCheck;
 		bool			closed;
+		int fileFd;
+		int fileSendState; // 0: not started, 1: headers sent, 2: sending body, 3: done
+		ssize_t fileSendOffset;
 
 
 		Connection();
@@ -45,7 +48,7 @@ class   Connection
 		// ahanaf
 		Root*				getRoot();
 		const Location*		getLocation();
-		const Location*		getLocation() const;
+		// const Location*		getLocation() const;
 		AutoIndex*			getAutoIndex();
 		ErrorPage*			getErrorPage();
 		Index*				getIndex();
@@ -54,7 +57,7 @@ class   Connection
 		Connection*			findConnectionByFd(int, std::vector<Connection*>&);
 		void				closeConnection(Connection*, std::vector<Connection*>&, int);
 
-		Return* getReturnDirective() const;
-		ErrorPage* getErrorPageForCode(int code) const;
+		Return* getReturnDirective();
+		ErrorPage* getErrorPageForCode(int code);
 
 };

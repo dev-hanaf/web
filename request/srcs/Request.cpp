@@ -114,7 +114,13 @@ bool	Request::_validateMethodBodyCompatibility()
 		return setState(true, OK);
 
 	if (hasBody)
+	{
+		std::cout << "Request body expected for method: " << method << std::endl;
+		std::cout << "Chunked:" << _rb.isChunked() << ", Content-Length: " << _rb.getContentLength() << std::endl;
 		_rb.setExpected();
+	}
+	if (_rb.isExpected())
+		std::cout << "Request body is expected." << std::endl;
 
 	return true;
 }
@@ -156,6 +162,8 @@ bool	Request::stateChecker() const
 
 bool	Request::isRequestDone() const
 {
+	std::cout << "Request state: " << _state << ", request:" << _rl.getMethod() << " " << _rl.getUri() << std::endl;
+	std::cout << "Request body: " << _rb.isExpected() << ", completed: " << _rb.isCompleted() << std::endl;
 	if (_state == COMPLETE || _state == ERROR)
 		return true;
 	return false;

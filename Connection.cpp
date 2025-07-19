@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cstddef>
 #include <cstdlib>
 # include <ctime>
 # include <unistd.h>
@@ -17,13 +19,15 @@
 
 Connection::Connection()
 	:	fd(-1), req(NULL), connect(false),
-		conServer(NULL), shouldKeepAlive(false), lastTimeoutCheck(time(NULL)), closed(false)
+		conServer(NULL), shouldKeepAlive(false), lastTimeoutCheck(time(NULL)), closed(false),
+		fileFd(-1), fileSendState(0), fileSendOffset(0)
 {
 }
 
 Connection::Connection(int clientFd)
 	:	fd(clientFd), req(NULL), connect(false),
-		conServer(NULL), shouldKeepAlive(false), lastTimeoutCheck(time(NULL)), closed(false)
+		conServer(NULL), shouldKeepAlive(false), lastTimeoutCheck(time(NULL)), closed(false),
+		fileFd(-1), fileSendState(0), fileSendOffset(0)
 {
 }
 
@@ -35,7 +39,7 @@ void	Connection::updateTime()
 Connection* Connection::findConnectionByFd(int fd, std::vector<Connection*>& connections)
 {
 	for (std::vector<Connection*>::iterator it = connections.begin(); 
-		 it != connections.end(); ++it)
+		it != connections.end(); ++it)
 	{
 		if ((*it)->fd == fd)
 			return *it;
@@ -177,64 +181,6 @@ ClientMaxBodySize*	Connection::getClientMaxBodySize()
 	return NULL;
 }
 
-const Location* Connection::getLocation() const
-{
-    if (!conServer)
-        return NULL;
-    std::string reqUri;
-    if (req && req->getRequestLine().getUri().size())
-        reqUri = req->getRequestLine().getUri();
-    else if (!uri.empty())
-        reqUri = uri;
-    else
-        return NULL;
-
-    // First, check for exact match (file-level or exact location)
-    for (std::vector<IDirective*>::const_iterator it = conServer->directives.begin(); it != conServer->directives.end(); ++it) {
-        if ((*it)->getType() != LOCATION)
-            continue;
-        const Location* loc = static_cast<const Location*>(*it);
-        if (!loc) continue;
-        char* locUri = loc->getUri();
-        if (!locUri) continue;
-        std::string locUriStr(locUri);
-        if (locUriStr == reqUri) {
-            std::cout << "[getLocation] Exact file/location match found!" << std::endl;
-            return loc;
-        }
-    }
-
-    // Then, check for best prefix match
-    const Location* bestLoc = NULL;
-    size_t bestMatchLen = 0;
-    for (std::vector<IDirective*>::const_iterator it = conServer->directives.begin(); it != conServer->directives.end(); ++it) {
-        if ((*it)->getType() != LOCATION)
-            continue;
-        const Location* loc = static_cast<const Location*>(*it);
-        if (!loc) continue;
-        char* locUri = loc->getUri();
-        bool exact = loc->isExactMatch();
-        if (!locUri) continue;
-        std::string locUriStr(locUri);
-        if (exact) {
-            if (reqUri == locUriStr) {
-                std::cout << "[getLocation] Exact match found!" << std::endl;
-                return loc;
-            }
-        } else {
-            if (!locUriStr.empty() && reqUri.find(locUriStr) == 0 && locUriStr.length() > bestMatchLen) {
-                bestMatchLen = locUriStr.length();
-                bestLoc = loc;
-            }
-        }
-    }
-    if (bestLoc) {
-        std::cout << "[getLocation] Prefix match found!" << std::endl;
-        return bestLoc;
-    }
-    std::cout << "[getLocation] No match found." << std::endl;
-    return NULL;
-}
 
 const Location* Connection::getLocation()
 {
@@ -273,6 +219,7 @@ const Location* Connection::getLocation()
 		}
 	}
 	if (bestLoc) {
+		std::cout << BLUE << bestLoc->getUri() << RESET << std::endl;
 		std::cout << "[getLocation] Prefix match found!" << std::endl;
 		return bestLoc;
 	}
@@ -302,40 +249,32 @@ Root*	Connection::getRoot()
 
 AutoIndex* Connection::getAutoIndex()
 {
-    // Check location context first
     const Location* location = getLocation();
     if (location) {
-        // std::cout << "[DEBUG] Location directives for URI: ";
         char* locUri = location->getUri();
         if (locUri) std::cout << locUri << std::endl;
         for (std::vector<IDirective*>::const_iterator dit = location->directives.begin(); 
         dit != location->directives.end(); ++dit) 
         {
-            // std::cout << "[DEBUG] Location directive type: " << (*dit)->getType() << std::endl;
             if ((*dit)->getType() == AUTOINDEX) {
                 AutoIndex* locAutoIndex = static_cast<AutoIndex*>(*dit);
                 if (locAutoIndex) {
-                    // std::cout << "autoindex (location) -> " << locAutoIndex->getState() << std::endl;
                     return locAutoIndex;
                 }
             }
         }
     }
-    // Then check server context
     AutoIndex* autoindex = static_cast<AutoIndex*>(getDirective(AUTOINDEX));
     if (autoindex) {
-        // std::cout << "autoindex  -> " << autoindex->getState() << std::endl;
         return autoindex;
     }
-    // Default to off
     static AutoIndex defaultOff;
     defaultOff.setState(false);
     return &defaultOff;
 }
 
-Return* Connection::getReturnDirective() const {
+Return* Connection::getReturnDirective(){
 	const Location* location = getLocation();
-	// std::cout << "location -> " << location << std::endl;
 	if (location) {
 		IDirective* dir = location->getDirective(RETURN);
 		if (dir) {
@@ -355,7 +294,6 @@ Return* Connection::getReturnDirective() const {
 }
 
 Index* Connection::getIndex() {
-    // Check location context first
     const Location* location = getLocation();
     if (location) {
         for (std::vector<IDirective*>::const_iterator dit = location->directives.begin(); 
@@ -366,7 +304,6 @@ Index* Connection::getIndex() {
             }
         }
     }
-    // Then check server context
     Index* index = static_cast<Index*>(getDirective(INDEX));
     if (index)
         return index;
@@ -378,7 +315,6 @@ ErrorPage* Connection::getErrorPage() {
 	if (errorPage)
 		return errorPage;
 	
-	// Check location context if not found in server
 	const Location* location = getLocation();
 	if (location) {
 		for (std::vector<IDirective*>::const_iterator dit = location->directives.begin(); 
@@ -393,7 +329,7 @@ ErrorPage* Connection::getErrorPage() {
 	return NULL;
 }
 
-ErrorPage* Connection::getErrorPageForCode(int code) const {
+ErrorPage* Connection::getErrorPageForCode(int code) {
 	const Location* location = getLocation();
 	if (location) {
 		for (std::vector<IDirective*>::const_iterator dit = location->directives.begin(); dit != location->directives.end(); ++dit) {
@@ -416,34 +352,48 @@ ErrorPage* Connection::getErrorPageForCode(int code) const {
 	return NULL;
 }
 
-void	Connection::closeConnection(Connection* conn, std::vector<Connection*>& connections, int epollFd)
+void Connection::closeConnection(Connection* conn, std::vector<Connection*>& connections, int epollFd)
 {
-	if (conn->closed) {
-		return;
-	}
-	conn->closed = true;
+    if (!conn || conn->closed)
+        return;
 
-	epoll_ctl(epollFd, EPOLL_CTL_DEL, conn->fd, NULL);
+    conn->closed = true;
 
-	if (conn->fd != -1)
-		close(conn->fd);
+    if (epollFd != -1 && conn->fd != -1)
+        epoll_ctl(epollFd, EPOLL_CTL_DEL, conn->fd, NULL);
 
-	if (conn->req)
+    if (conn->fileFd != -1) {
+        close(conn->fileFd);
+        conn->fileFd = -1;
+    }
+
+    if (conn->fd != -1) {
+        close(conn->fd);
+        conn->fd = -1;
+    }
+
+	delete conn->req;
+	conn->req = NULL;
+	
+	connections.erase(
+	    std::remove(connections.begin(), connections.end(), conn),
+	    connections.end()
+	);
+	if (std::find(connections.begin(), connections.end(), conn) != connections.end())
 	{
-		delete conn->req;
-		conn->req = NULL;
+		std::cout << "Failed to remove connection from vector" << std::endl;
 	}
-
-	// Erase from vector BEFORE deleting
-	for (std::vector<Connection*>::iterator it = connections.begin(); it != connections.end(); ++it)
+	else
 	{
-		if (*it == conn)
-		{
-			std::cout << "connection erased" << conn->fd << std::endl;
-			connections.erase(it);
-			break;
-		}
+		std::cout << "Connection successfully removed from vector" << std::endl;
+		std::cout << "Remaining connections: " << connections.size() << std::endl;
+		if (conn->req == NULL)
+			std::cout << "Request pointer is NULL" << std::endl;
+		else
+			std::cout << "Request pointer is not NULL" << std::endl;
 	}
 
 	delete conn;
+	conn = NULL;
+	std::cout << "Connection closed and deleted" << std::endl;
 }

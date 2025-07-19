@@ -10,7 +10,7 @@
 
 static std::string getDefaultErrorFile(int statusCode) {
     std::stringstream ss;
-    ss << "wwwww/error_" << statusCode << ".html";
+    ss << "www/error_" << statusCode << ".html";
     return ss.str();
 }
 
@@ -63,16 +63,15 @@ Response ErrorResponse::createErrorResponseWithMapping(Connection* conn, int sta
     return createErrorResponse(statusCode, message);
 }
 
-Response ErrorResponse::createMethodNotAllowedResponse(const std::vector<std::string>& allowedMethods) {
-    Response response(405);
+Response ErrorResponse::createMethodNotAllowedResponse(Connection* conn, const std::vector<std::string>& allowedMethods) {
     std::string methods;
     for (size_t i = 0; i < allowedMethods.size(); ++i) {
         if (i > 0) methods += ", ";
         methods += allowedMethods[i];
     }
-    response.addHeader("Allow", methods);
-    setDefaultErrorFile(response, 405);
-    return response;
+    Response errorBodyResponse = createErrorResponseWithMapping(conn, 405);
+    errorBodyResponse.addHeader("Allow", methods); // Copy over Allow header
+    return errorBodyResponse;
 }
 
 Response ErrorResponse::createNotFoundResponse(Connection* conn) {

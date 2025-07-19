@@ -5,7 +5,7 @@
 # include "../incs/RequestBody.hpp"
 
 RequestBody::RequestBody()
-	:	_isParsed(false), _isChunked(false), _statusCode(START),
+	:	_expected(false), _isParsed(false), _isChunked(false), _statusCode(START),
 		_isMultipart(false), _isCompleted(false),
 		_contentLength(0), _bytesReceived(0), _chunkParsePos(0),
 		_currentChunkSize(0), _bytesReceivedInChunk(0)
@@ -390,7 +390,6 @@ std::string	RequestBody::extractBoundary(const std::string& contentType)
 	boundaryPos += 9;
 	std::string boundary = contentType.substr(boundaryPos);
 	
-	// Trim whitespace and quotes
 	size_t start = boundary.find_first_not_of(" \t\"");
 	if (start == std::string::npos)
 		return "";

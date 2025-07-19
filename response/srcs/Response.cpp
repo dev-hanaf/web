@@ -4,27 +4,16 @@
 #include <algorithm>
 #include <sys/stat.h>
 #include <ctime>
-#include <unistd.h>
 
-Response::Response()
-    : _statusCode(200), _statusMessage("OK"), _isBuilt(false), cursor(0), fileFd(-1)
-{
+Response::Response() : _statusCode(200), _statusMessage("OK"), _fileSize(0), _isBuilt(false), cursor(0) {
     _addDefaultHeaders();
 }
 
-Response::Response(int statusCode)
-    : _statusCode(statusCode), _statusMessage(_getStatusMessage(statusCode)), _isBuilt(false), cursor(0), fileFd(-1)
-{
+Response::Response(int statusCode) : _statusCode(statusCode), _statusMessage(_getStatusMessage(statusCode)), _fileSize(0), _isBuilt(false) , cursor(0){
     _addDefaultHeaders();
 }
 
-Response::~Response()
-{
-    if (fileFd != -1) {
-        close(fileFd);
-        fileFd = -1;
-    }
-}
+Response::~Response() {}
 
 void Response::_addDefaultHeaders() {
     _headers["Server"] = "WebServ/1.0";
@@ -103,23 +92,19 @@ std::string Response::build() {
     if (_headers.find("Server") == _headers.end()) {
         _headers["Server"] = "WebServ/1.1";
     }
-
-
-    std::ostringstream oss;
-    oss << _fileSize;
-    _headers["Content-Length"] = oss.str();
-    // if (_statusCode != 204 && _statusCode != 304) {
-    //     if (_headers.find("Content-Length") == _headers.end()) {
-    //         std::ostringstream oss;
-    //         oss << _fileSize;
-    //         _headers["Content-Length"] = oss.str();
-    //     }
-    // }
+    if (_statusCode != 204 && _statusCode != 304) {
+        if (_headers.find("Content-Length") == _headers.end()) {
+            std::ostringstream oss;
+            oss << _fileSize;
+            _headers["Content-Length"] = oss.str();    
+        }
+    }
     if (_statusCode != 204 && _statusCode != 304 && !_filePath.empty()) {
         if (_headers.find("Content-Type") == _headers.end()) {
             _headers["Content-Type"] = "text/plain";
         }
     }
+    // _headers["Connection"] = "close"; // 
     std::vector<std::pair<std::string, std::string> > sortedHeaders(_headers.begin(), _headers.end());
     std::sort(sortedHeaders.begin(), sortedHeaders.end());
     for (size_t i = 0; i < sortedHeaders.size(); ++i) {
@@ -152,6 +137,7 @@ void Response::setFilePath(const std::string& path) {
 
 void Response::setFileSize(size_t size) {
     _fileSize = size;
+    std::cout << "size is " << size << std::endl;
     _isBuilt = false;
 }
 

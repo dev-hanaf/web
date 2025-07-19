@@ -16,7 +16,7 @@ public:
     static void initialize();
     static Response handleRequest(Connection* conn);
     static Response createErrorResponse(int statusCode, const std::string& message);
-    static Response createMethodNotAllowedResponse(const std::vector<std::string>& allowedMethods);
+    static Response createMethodNotAllowedResponse(Connection* conn, const std::vector<std::string>& allowedMethods);
     static Response createNotFoundResponse(Connection* conn);
     static Response createForbiddenResponse();
     static Response createInternalErrorResponse();

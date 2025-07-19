@@ -29,39 +29,6 @@ std::string ResponseHandler::_getRootPath(Connection* conn) {
     if (root && root->getPath()) return std::string(root->getPath());
     return "www";
 }
-std::string ResponseHandler::_getUploadPath(Connection*) {
-    return "uploads";
-}
-bool ResponseHandler::_getAutoIndex(Connection* conn) {
-    if (!conn) return false;
-    AutoIndex* autoindex = conn->getAutoIndex();
-    if (autoindex) return autoindex->getState();
-    return false;
-}
-std::vector<std::string> ResponseHandler::_getAllowedMethods(Connection* conn) {
-    std::vector<std::string> methods;
-    if (!conn) {
-        methods.push_back("GET");
-        methods.push_back("POST");
-        methods.push_back("DELETE");
-        return methods;
-    }
-    LimitExcept* limitExcept = conn->getLimitExcept();
-    if (limitExcept) {
-        char** allowedMethods = limitExcept->getMethods();
-        if (allowedMethods) {
-            for (int i = 0; allowedMethods[i] != NULL; ++i) {
-                methods.push_back(std::string(allowedMethods[i]));
-            }
-        }
-    }
-    if (methods.empty()) {
-        methods.push_back("GET");
-        methods.push_back("POST");
-        methods.push_back("DELETE");
-    }
-    return methods;
-}
 std::vector<std::string> ResponseHandler::_getIndexFiles(Connection* conn) {
     std::vector<std::string> indexFiles;
     if (!conn) {
@@ -83,6 +50,12 @@ std::vector<std::string> ResponseHandler::_getIndexFiles(Connection* conn) {
         indexFiles.push_back("index.htm");
     }
     return indexFiles;
+}
+bool ResponseHandler::_getAutoIndex(Connection* conn) {
+    if (!conn) return false;
+    AutoIndex* autoindex = conn->getAutoIndex();
+    if (autoindex) return autoindex->getState();
+    return false;
 }
 std::map<int, std::string> ResponseHandler::_getErrorPages(Connection* conn) {
     std::map<int, std::string> errorPages;
@@ -108,9 +81,29 @@ std::map<int, std::string> ResponseHandler::_getErrorPages(Connection* conn) {
     }
     return errorPages;
 }
-std::string ResponseHandler::_getErrorPage(int code, const std::map<int, std::string>& e) {
-    std::map<int, std::string>::const_iterator it = e.find(code);
-    return it != e.end() ? it->second : std::string();
+std::vector<std::string> ResponseHandler::_getAllowedMethods(Connection* conn) {
+    std::vector<std::string> methods;
+    if (!conn) {
+        methods.push_back("GET");
+        return methods;
+    }
+    LimitExcept* limitExcept = conn->getLimitExcept();
+    if (limitExcept) {
+        char** allowedMethods = limitExcept->getMethods();
+        if (allowedMethods) {
+            for (int i = 0; allowedMethods[i] != NULL; ++i) {
+                methods.push_back(std::string(allowedMethods[i]));
+            }
+        }
+    }
+    if (methods.empty()) {
+        methods.push_back("GET");
+    }
+    return methods;
+}
+bool ResponseHandler::_isAllowedMethod(const std::string& method, const std::vector<std::string>& allowedMethods) {
+    if (method.empty()) return false;
+    return std::find(allowedMethods.begin(), allowedMethods.end(), method) != allowedMethods.end();
 }
 std::string ResponseHandler::_buildFilePath(const std::string& uri, const std::string& root) {
     if (root.empty()) return uri;
@@ -121,9 +114,30 @@ std::string ResponseHandler::_buildFilePath(const std::string& uri, const std::s
     path += cleanUri;
     return path;
 }
-bool ResponseHandler::_isAllowedMethod(const std::string& method, const std::vector<std::string>& allowedMethods) {
-    if (method.empty()) return false;
-    return std::find(allowedMethods.begin(), allowedMethods.end(), method) != allowedMethods.end();
+std::string ResponseHandler::_getMimeType(const std::string& path) {
+    size_t dotPos = path.find_last_of('.');
+    if (dotPos != std::string::npos) {
+        std::string ext = path.substr(dotPos);
+        if (ext == ".html") return "text/html";
+        if (ext == ".htm") return "text/html";
+        if (ext == ".css") return "text/css";
+        if (ext == ".js") return "application/javascript";
+        if (ext == ".json") return "application/json";
+        if (ext == ".png") return "image/png";
+        if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+        if (ext == ".gif") return "image/gif";
+        if (ext == ".svg") return "image/svg+xml";
+        if (ext == ".ico") return "image/x-icon";
+        if (ext == ".txt") return "text/plain";
+        if (ext == ".pdf") return "application/pdf";
+        if (ext == ".zip") return "application/zip";
+        if (ext == ".tar") return "application/x-tar";
+        if (ext == ".gz") return "application/gzip";
+        if (ext == ".mp3") return "audio/mpeg";
+        if (ext == ".mp4") return "video/mp4";
+        if (ext == ".xml") return "application/xml";
+    }
+    return "application/octet-stream";
 }
 std::string ResponseHandler::_generateDirectoryListing(const std::string& path, const std::string& uri) {
     DIR* dir = opendir(path.c_str());
@@ -147,327 +161,73 @@ std::string ResponseHandler::_generateDirectoryListing(const std::string& path, 
     closedir(dir);
     return html;
 }
-static std::map<std::string, std::string> createMimeTypeMap() {
-  std::map<std::string, std::string> mimeMap;
-  mimeMap[".html"] = "text/html";
-  mimeMap[".htm"] = "text/html";
-  mimeMap[".shtml"] = "text/html";
-  mimeMap[".css"] = "text/css";
-  mimeMap[".xml"] = "text/xml";
-  mimeMap[".gif"] = "image/gif";
-  mimeMap[".jpeg"] = "image/jpeg";
-  mimeMap[".jpg"] = "image/jpeg";
-  mimeMap[".js"] = "application/javascript";
-  mimeMap[".atom"] = "application/atom+xml";
-  mimeMap[".rss"] = "application/rss+xml";
-  mimeMap[".mml"] = "text/mathml";
-  mimeMap[".txt"] = "text/plain";
-  mimeMap[".jad"] = "text/vnd.sun.j2me.app-descriptor";
-  mimeMap[".wml"] = "text/vnd.wap.wml";
-  mimeMap[".htc"] = "text/x-component";
-  mimeMap[".avif"] = "image/avif";
-  mimeMap[".png"] = "image/png";
-  mimeMap[".svg"] = "image/svg+xml";
-  mimeMap[".svgz"] = "image/svg+xml";
-  mimeMap[".tif"] = "image/tiff";
-  mimeMap[".tiff"] = "image/tiff";
-  mimeMap[".wbmp"] = "image/vnd.wap.wbmp";
-  mimeMap[".webp"] = "image/webp";
-  mimeMap[".ico"] = "image/x-icon";
-  mimeMap[".jng"] = "image/x-jng";
-  mimeMap[".bmp"] = "image/x-ms-bmp";
-  mimeMap[".woff"] = "font/woff";
-  mimeMap[".woff2"] = "font/woff2";
-  mimeMap[".jar"] = "application/java-archive";
-  mimeMap[".war"] = "application/java-archive";
-  mimeMap[".ear"] = "application/java-archive";
-  mimeMap[".json"] = "application/json";
-  mimeMap[".hqx"] = "application/mac-binhex40";
-  mimeMap[".doc"] = "application/msword";
-  mimeMap[".pdf"] = "application/pdf";
-  mimeMap[".ps"] = "application/postscript";
-  mimeMap[".eps"] = "application/postscript";
-  mimeMap[".ai"] = "application/postscript";
-  mimeMap[".rtf"] = "application/rtf";
-  mimeMap[".m3u8"] = "application/vnd.apple.mpegurl";
-  mimeMap[".kml"] = "application/vnd.google-earth.kml+xml";
-  mimeMap[".kmz"] = "application/vnd.google-earth.kmz";
-  mimeMap[".xls"] = "application/vnd.ms-excel";
-  mimeMap[".eot"] = "application/vnd.ms-fontobject";
-  mimeMap[".ppt"] = "application/vnd.ms-powerpoint";
-  mimeMap[".odg"] = "application/vnd.oasis.opendocument.graphics";
-  mimeMap[".odp"] = "application/vnd.oasis.opendocument.presentation";
-  mimeMap[".ods"] = "application/vnd.oasis.opendocument.spreadsheet";
-  mimeMap[".odt"] = "application/vnd.oasis.opendocument.text";
-  mimeMap[".pptx"] = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-  mimeMap[".xlsx"] = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  mimeMap[".docx"] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  mimeMap[".wmlc"] = "application/vnd.wap.wmlc";
-  mimeMap[".wasm"] = "application/wasm";
-  mimeMap[".7z"] = "application/x-7z-compressed";
-  mimeMap[".cco"] = "application/x-cocoa";
-  mimeMap[".jardiff"] = "application/x-java-archive-diff";
-  mimeMap[".jnlp"] = "application/x-java-jnlp-file";
-  mimeMap[".run"] = "application/x-makeself";
-  mimeMap[".pl"] = "application/x-perl";
-  mimeMap[".pm"] = "application/x-perl";
-  mimeMap[".prc"] = "application/x-pilot";
-  mimeMap[".pdb"] = "application/x-pilot";
-  mimeMap[".rar"] = "application/x-rar-compressed";
-  mimeMap[".rpm"] = "application/x-redhat-package-manager";
-  mimeMap[".sea"] = "application/x-sea";
-  mimeMap[".swf"] = "application/x-shockwave-flash";
-  mimeMap[".sit"] = "application/x-stuffit";
-  mimeMap[".tcl"] = "application/x-tcl";
-  mimeMap[".tk"] = "application/x-tcl";
-  mimeMap[".der"] = "application/x-x509-ca-cert";
-  mimeMap[".pem"] = "application/x-x509-ca-cert";
-  mimeMap[".crt"] = "application/x-x509-ca-cert";
-  mimeMap[".xpi"] = "application/x-xpinstall";
-  mimeMap[".xhtml"] = "application/xhtml+xml";
-  mimeMap[".xspf"] = "application/xspf+xml";
-  mimeMap[".zip"] = "application/zip";
-  mimeMap[".bin"] = "application/octet-stream";
-  mimeMap[".exe"] = "application/octet-stream";
-  mimeMap[".dll"] = "application/octet-stream";
-  mimeMap[".deb"] = "application/octet-stream";
-  mimeMap[".dmg"] = "application/octet-stream";
-  mimeMap[".iso"] = "application/octet-stream";
-  mimeMap[".img"] = "application/octet-stream";
-  mimeMap[".msi"] = "application/octet-stream";
-  mimeMap[".msp"] = "application/octet-stream";
-  mimeMap[".msm"] = "application/octet-stream";
-  mimeMap[".mid"] = "audio/midi";
-  mimeMap[".midi"] = "audio/midi";
-  mimeMap[".kar"] = "audio/midi";
-  mimeMap[".mp3"] = "audio/mpeg";
-  mimeMap[".ogg"] = "audio/ogg";
-  mimeMap[".m4a"] = "audio/x-m4a";
-  mimeMap[".ra"] = "audio/x-realaudio";
-  mimeMap[".3gpp"] = "video/3gpp";
-  mimeMap[".3gp"] = "video/3gpp";
-  mimeMap[".ts"] = "video/mp2t";
-  mimeMap[".mp4"] = "video/mp4";
-  mimeMap[".mpeg"] = "video/mpeg";
-  mimeMap[".mpg"] = "video/mpeg";
-  mimeMap[".mov"] = "video/quicktime";
-  mimeMap[".webm"] = "video/webm";
-  mimeMap[".flv"] = "video/x-flv";
-  mimeMap[".m4v"] = "video/x-m4v";
-  mimeMap[".mng"] = "video/x-mng";
-  mimeMap[".asx"] = "video/x-ms-asf";
-  mimeMap[".asf"] = "video/x-ms-asf";
-  mimeMap[".wmv"] = "video/x-ms-wmv";
-  mimeMap[".avi"] = "video/x-msvideo";
-  return mimeMap;
-}
-static std::map<std::string, std::string> mimeTypes = createMimeTypeMap();
-std::string ResponseHandler::_getMimeType(const std::string& path) {
-    size_t dotPos = path.find_last_of('.');
-    if (dotPos != std::string::npos) {
-        std::string ext = path.substr(dotPos);
-        std::map<std::string, std::string>::const_iterator it = mimeTypes.find(ext);
-        if (it != mimeTypes.end()) return it->second;
-    }
-    return "application/octet-stream";
-}
-Response ResponseHandler::handleRequest(Connection* conn) {
-    Return* ret = conn ? conn->getReturnDirective() : NULL;
-    if (ret) std::cout << RED << ret->getUrl() << RESET <<  std::endl;
-    if (ret) return ReturnHandler::handle(conn);
+Response ResponseHandler::handleRequest(Connection* conn) 
+{
     if (!conn || !conn->req) return ErrorResponse::createInternalErrorResponse();
     const Request& request = *conn->req;
     std::string method = request.getRequestLine().getMethod();
     std::vector<std::string> allowed = _getAllowedMethods(conn);
-    if (std::find(allowed.begin(), allowed.end(), method) == allowed.end())
-        return ErrorResponse::createMethodNotAllowedResponse(allowed);
-    std::string root = _getRootPath(conn);
+    if (!_isAllowedMethod(method, allowed))
+        return ErrorResponse::createMethodNotAllowedResponse(conn ,allowed);
+    const Location* location = conn->getLocation();
+    Return* ret = conn->getReturnDirective();
+    if (ret) return ReturnHandler::handle(conn);
+    std::string root;
+    Root* locRoot = NULL;
+    if (location) {
+        for (std::vector<IDirective*>::const_iterator dit = location->directives.begin(); dit != location->directives.end(); ++dit) {
+            if ((*dit)->getType() == ROOT) {
+                locRoot = static_cast<Root*>(*dit);
+                break;
+            }
+        }
+    }
+    if (locRoot && locRoot->getPath())
+        root = std::string(locRoot->getPath());
+    else
+        root = _getRootPath(conn);
     std::string uri = request.getRequestLine().getUri();
     std::string filePath = _buildFilePath(uri, root);
-    if (method == "GET") {
-        struct stat fileStat;
-        filePath = "home/ahanaf/lenovo/www/test.html";
-        std::cout << RED << "[" << filePath  << "]" <<  RESET  <<std::endl;
-        if (stat(filePath.c_str(), &fileStat) == 0) {
-        std::cout <<  " open with stat"    << std::endl;
-            Response response(200);
-            response.setFilePath(filePath);
-            response.setContentType(_getMimeType(filePath));
-            response.setFileSize(static_cast<size_t>(fileStat.st_size));
-            return response;
-        //     std::vector<std::string> indexFiles = _getIndexFiles(conn);
-        //     for (size_t i = 0; i < indexFiles.size(); ++i) {
-        //         std::cout << BLUE << indexFiles[i] << RESET << std::endl;
-        //         std::string indexPath = filePath + "/" + indexFiles[i];
-        //         std::cout << BLUE << indexPath << RESET << std::endl;
-        //         if (stat(indexPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
-        //             std::ifstream in(indexPath.c_str(), std::ios::binary);
-        //             if (in) {
-        //                 std::string dir = _getRootPath(conn);
-        //                 if (dir.empty()) dir = "www";
-        //                 struct stat st;
-        //                 if (stat(dir.c_str(), &st) == -1) {
-        //                     mkdir(dir.c_str(), 0755);
-        //                 }
-        //                 std::stringstream ss;
-        //                 ss << dir << "/indexfile_" << getpid() << ".tmp";
-        //                 std::string tmpFile = ss.str();
-        //                 std::ofstream out(tmpFile.c_str(), std::ios::binary);
-        //                 out << in.rdbuf();
-        //                 in.close();
-        //                 out.close();
-        //                 struct stat tmpStat;
-        //                 if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
-        //                     Response response(200);
-        //                     response.setFilePath(tmpFile);
-        //                     response.setContentType(_getMimeType(indexPath));
-        //                     response.setFileSize(static_cast<size_t>(tmpStat.st_size));
-        //                     return response;
-        //                 }
-        //             }
-        //         }
-        //     }
-        //     std::cout << "i am out from here "  << filePath.c_str() << std::endl;
-        //     return ErrorResponse::createErrorResponseWithMapping(conn, 404, "The requested resource was not found");
-        // }
-
-        // if (S_ISDIR(fileStat.st_mode)) {
-        //     std::vector<std::string> indexFiles = _getIndexFiles(conn);
-        //     for (size_t i = 0; i < indexFiles.size(); ++i) {
-        //         std::string indexPath = filePath + "/" + indexFiles[i];
-        //         if (stat(indexPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
-        //             std::ifstream in(indexPath.c_str(), std::ios::binary);
-        //             if (in) {
-        //                 std::string dir = _getRootPath(conn);
-        //                 if (dir.empty()) dir = "www";
-        //                 struct stat st;
-        //                 if (stat(dir.c_str(), &st) == -1) {
-        //                     mkdir(dir.c_str(), 0755);
-        //                 }
-        //                 std::stringstream ss;
-        //                 ss << dir << "/indexfile_" << getpid() << ".tmp";
-        //                 std::string tmpFile = ss.str();
-        //                 std::ofstream out(tmpFile.c_str(), std::ios::binary);
-        //                 out << in.rdbuf();
-        //                 in.close();
-        //                 out.close();
-        //                 struct stat tmpStat;
-        //                 if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
-        //                     Response response(200);
-        //                     response.setFilePath(tmpFile);
-        //                     response.setContentType(_getMimeType(indexPath));
-        //                     response.setFileSize(static_cast<size_t>(tmpStat.st_size));
-        //                     return response;
-        //                 }
-        //             }
-        //         }
-        //     }
-        //     bool autoIndex = _getAutoIndex(conn);
-        //     if (autoIndex) {
-        //         std::string listing = _generateDirectoryListing(filePath, uri);
-        //         std::string dir = _getRootPath(conn);
-        //         if (dir.empty()) dir = "www";
-        //         struct stat st;
-        //         if (stat(dir.c_str(), &st) == -1) {
-        //             mkdir(dir.c_str(), 0755);
-        //         }
-        //         std::stringstream ss;
-        //         ss << dir << "/autoindex_" << getpid() << ".html";
-        //         std::string tmpFile = ss.str();
-        //         std::ofstream out(tmpFile.c_str());
-        //         out << listing;
-        //         out.close();
-        //         struct stat tmpStat;
-        //         if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
-        //             Response response(200);
-        //             response.setFilePath(tmpFile);
-        //             response.setContentType("text/html");
-        //             response.setFileSize(static_cast<size_t>(tmpStat.st_size));
-        //             return response;
-        //         }
-        //     } else {
-        //         return ErrorResponse::createErrorResponseWithMapping(conn, 403, "Directory listing not allowed");
-        //     }
-        // }
-        // std::string mimeType = _getMimeType(filePath);
-        // std::ifstream in(filePath.c_str(), std::ios::binary);
-        // if (in) {
-        //     std::string dir = _getRootPath(conn);
-        //     if (dir.empty()) dir = "www";
-        //     struct stat st;
-        //     if (stat(dir.c_str(), &st) == -1) {
-        //         mkdir(dir.c_str(), 0755);
-        //     }
-        //     std::stringstream ss;
-        //     ss << dir << "/file_" << getpid() << ".tmp";
-        //     std::string tmpFile = ss.str();
-        //     std::ofstream out(tmpFile.c_str(), std::ios::binary);
-        //     out << in.rdbuf();
-        //     in.close();
-        //     out.close();
-        //     struct stat tmpStat;
-        //     if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
-        //         Response response(200);
-        //         response.setFilePath(tmpFile);
-        //         response.setContentType(mimeType);
-        //         response.setFileSize(static_cast<size_t>(tmpStat.st_size));
-        //         return response;
-        //     }
-        }
-        return ErrorResponse::createErrorResponseWithMapping(conn, 500, "Failed to read file");
-    }
-    if (method == "POST") {
-        std::string tmpFile = request.getRequestBody().getRawData();
-        std::string uploadDir = _getUploadPath(conn);
-        mkdir(uploadDir.c_str(), 0755);
-        std::string uploadPath = uploadDir + "/upload_" + std::string("TODO_TIMESTAMP");
-        if (rename(tmpFile.c_str(), uploadPath.c_str()) == 0) {
-            struct stat upStat;
-            if (stat(uploadPath.c_str(), &upStat) == 0)
-                return FileResponse::serve(uploadPath, MimeTypes::get(uploadPath), 201);
-        }
-        std::map<int, std::string> errorPages = _getErrorPages(conn);
-        std::string errPage = _getErrorPage(500, errorPages);
-        if (!errPage.empty()) {
-            struct stat epStat;
-            if (stat(errPage.c_str(), &epStat) == 0)
-                return FileResponse::serve(errPage, MimeTypes::get(errPage), 500);
-        }
-        return ErrorResponse::createInternalErrorResponse();
-    }
-    if (method == "DELETE") {
-        struct stat fileStat;
-        if (stat(filePath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
-            if (filePath.find(root) == 0 || filePath.find(_getUploadPath(conn)) == 0) {
-                if (remove(filePath.c_str()) == 0) return Response(204);
-                std::map<int, std::string> errorPages = _getErrorPages(conn);
-                std::string errPage = _getErrorPage(500, errorPages);
-                if (!errPage.empty()) {
-                    struct stat epStat;
-                    if (stat(errPage.c_str(), &epStat) == 0)
-                        return FileResponse::serve(errPage, MimeTypes::get(errPage), 500);
-                }
-                return ErrorResponse::createInternalErrorResponse();
+    struct stat fileStat;
+    bool isDir = false;
+    if (stat(filePath.c_str(), &fileStat) == 0 && S_ISDIR(fileStat.st_mode)) isDir = true;
+    std::vector<std::string> indexFiles = _getIndexFiles(conn);
+    if (isDir) {
+        for (size_t i = 0; i < indexFiles.size(); ++i) {
+            std::string indexPath = filePath + "/" + indexFiles[i];
+            if (stat(indexPath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+                return FileResponse::serve(indexPath, _getMimeType(indexPath), 200);
             }
-            std::map<int, std::string> errorPages = _getErrorPages(conn);
-            std::string errPage = _getErrorPage(403, errorPages);
-            if (!errPage.empty()) {
-                struct stat epStat;
-                if (stat(errPage.c_str(), &epStat) == 0)
-                    return FileResponse::serve(errPage, MimeTypes::get(errPage), 403);
-            }
-            return ErrorResponse::createForbiddenResponse();
         }
-        std::map<int, std::string> errorPages = _getErrorPages(conn);
-        std::string errPage = _getErrorPage(404, errorPages);
-        if (!errPage.empty()) {
-            struct stat epStat;
-            if (stat(errPage.c_str(), &epStat) == 0)
-                return FileResponse::serve(errPage, MimeTypes::get(errPage), 404);
-        }
-        return ErrorResponse::createNotFoundResponse(conn);
     }
-    return ErrorResponse::createInternalErrorResponse();
+    if (isDir) {
+        if (_getAutoIndex(conn)) {
+            std::string listing = _generateDirectoryListing(filePath, uri);
+            std::string dir = root.empty() ? "www" : root;
+            std::stringstream ss;
+            ss << dir << "/autoindex_" << getpid() << ".html";
+            std::string tmpFile = ss.str();
+            std::ofstream out(tmpFile.c_str());
+            out << listing;
+            out.close();
+            struct stat tmpStat;
+            if (stat(tmpFile.c_str(), &tmpStat) == 0 && S_ISREG(tmpStat.st_mode)) {
+                return FileResponse::serve(tmpFile, "text/html", 200);
+            }
+        }
+        return ErrorResponse::createForbiddenResponse();
+    }
+    if (stat(filePath.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+        return FileResponse::serve(filePath, _getMimeType(filePath), 200);
+    }
+    std::map<int, std::string> errorPages = _getErrorPages(conn);
+    int errCode = 404;
+    std::string errPage = errorPages[errCode];
+    if (!errPage.empty()) {
+        if (stat(errPage.c_str(), &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+            return FileResponse::serve(errPage, _getMimeType(errPage), errCode);
+        }
+    }
+    return ErrorResponse::createNotFoundResponse(conn);
 }
-
 void ResponseHandler::initialize() {} 
